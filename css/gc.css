@@ -1,0 +1,35 @@
+body {
+    //padding: 0px 100px;
+    margin: 0px auto;
+    width: 1024px;
+    text-align: left;
+    background: #eee;
+}
+
+h1 {
+}
+
+input.query-box {
+    width: 500px;
+}
+
+div.content {
+    text-align: left;
+}
+
+textarea#pkg {
+    width: 800px;
+    height: 500px;
+}
+
+.schres .title a, .schres .title a:link, .schres .title a:visited {
+    color: black;
+}
+
+.schres .info {
+    color: green;
+}
+
+.code {
+    font-family: courier new;
+}

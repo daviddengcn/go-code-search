@@ -1,0 +1,26 @@
+{{template "header.html"}}
+<h2>Package {{.Name}} ({{.StaticScore}}) <a href="update?id={{.Package}}">update</a></h2>
+<div class="code">
+    import "{{.Package}}"
+</div>
+<pre>
+{{.Description}}
+</pre>
+<div>Imported by {{len .ImportedPkgs}} package(s):</div>
+    <ol class="schres">
+        {{range .ImportedPkgs}}
+            <li><a target="_blank" href="view?id={{.}}">{{.}}</a></li>
+        {{end}}
+    </ol>
+<div>
+<div>Imports {{len .Imports}} package(s):</div>
+    <ol class="schres">
+        {{range .Imports}}
+            <li><a target="_blank" href="view?id={{.}}">{{.}}</a></li>
+        {{end}}
+    </ol>
+<div>
+    <a target="_blank" href="http://godoc.org/{{.Package}}">GoDoc</a>
+    | Last Updated: {{.LastUpdated}} (<a href="crawl?id={{.Package}}">crawl</a>)
+</div>    
+{{template "footer.html"}}
