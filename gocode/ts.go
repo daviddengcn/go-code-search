@@ -20,84 +20,74 @@ func NewTokenSet(c appengine.Context, typePrefix string) *TokenSet {
 }
 
 type IndexEntry struct {
-	Token string
-	Id    string
+	Tokens []string
 }
 
-func (ts *TokenSet) Delete(field, id string) error {
-	log.Printf("    deleting field:%s id:%s", field, id)
-	q := datastore.NewQuery(ts.typePrefix+field).Filter("Id=", id).KeysOnly()
-	keys, err := q.GetAll(ts.c, nil)
-	if err != nil {
-		return err
-	}
-	log.Printf("    got %d keys", len(keys))
-
-	if len(keys) > 0 {
+func (ts *TokenSet) Clear(field string) error {
+	for {
+		q := datastore.NewQuery(ts.typePrefix+field)
+		cnt, err := q.Count(ts.c)
+		if err != nil {
+			return err
+		}
+		if cnt == 0 {
+			return nil
+		}
+		log.Printf("    [ts.Clear] %d items left", cnt)
+		
+		q = datastore.NewQuery(ts.typePrefix+field).KeysOnly().Limit(1000)
+		keys, err := q.GetAll(ts.c, nil)
+		if err != nil {
+			return err
+		}
+		log.Printf("    [ts.Clear] Deleting %d entries...", len(keys))
 		err = datastore.DeleteMulti(ts.c, keys)
 		if err != nil {
 			return err
 		}
 	}
-
-	return nil
 }
 
 func (ts *TokenSet) Index(field, id string, tokens villa.StrSet) error {
-	err := ts.Delete(field, id)
+	log.Printf("    [ts.Index] Adding %d tokens for field:%s id:%s", 
+		len(tokens), field, id)
+	_, err := datastore.Put(ts.c, datastore.NewKey(ts.c, ts.typePrefix+field,
+		id, 0, nil), &IndexEntry{
+			Tokens: tokens.Elements(),
+		})
 	if err != nil {
 		return err
-	}
-
-	log.Printf("    adding %d tokens for field:%s id:%s", len(tokens), field, id)
-	for token := range tokens {
-		_, err := datastore.Put(ts.c, datastore.NewIncompleteKey(ts.c,
-			ts.typePrefix+field, nil), &IndexEntry{
-			Token: token,
-			Id:    id,
-		})
-		if err != nil {
-			return err
-		}
 	}
 
 	return nil
 }
 
 func (ts *TokenSet) Search(field string, tokens villa.StrSet) ([]string, error) {
-	var idSet villa.StrSet
-	first := true
+	q := datastore.NewQuery(ts.typePrefix+field)
 	for token := range tokens {
-		q := datastore.NewQuery(ts.typePrefix+field).Filter("Token=", token)
-		var entries []IndexEntry
-		_, err := q.GetAll(ts.c, &entries)
-		if err != nil {
-			return nil, err
-		}
-
-		log.Printf("    %d entries for token %s", len(entries), token)
-
-		if first {
-			for _, entry := range entries {
-				idSet.Put(entry.Id)
-			}
-			first = false
-		} else {
-			var newIdSet villa.StrSet
-			for _, entry := range entries {
-				if idSet.In(entry.Id) {
-					newIdSet.Put(entry.Id)
-				}
-			}
-
-			idSet = newIdSet
-		}
+		q = q.Filter("Tokens=", token)
+	}
+	q = q.KeysOnly()
+	
+	keys, err := q.GetAll(ts.c, nil)
+	if err != nil {
+		return nil, err
 	}
 
-	return idSet.Elements(), nil
+	res := make([]string, len(keys))
+	for i, key := range keys {
+		res[i] = key.StringID()
+	}
+	log.Printf("    [ts.Search] %d entries for tokens %v", len(res), tokens)
+	
+	return res, nil
 }
 
-func (ts *TokenSet) SingleCount(field string, token string) (int, error) {
-	q := datastore.NewQuery(ts.typePrefix+field).Filter("Token=", token)
+func (ts *TokenSet) Count(field string, tokens villa.StrSet) (int, error) {
+	q := datastore.NewQuery(ts.typePrefix+field)
+	for token := range tokens {
+		q = q.Filter("Tokens=", token)
+	}
+	
 	return q.Count(ts.c)
 }

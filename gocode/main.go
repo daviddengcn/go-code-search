@@ -1,17 +1,13 @@
 package gocode
 
 import (
-	//    "fmt"
 	"appengine"
-//	"github.com/daviddengcn/go-villa"
-	"github.com/garyburd/gddo/doc"
 	"html/template"
+	"github.com/daviddengcn/go-villa"
 	"log"
-	"net"
 	"net/http"
 	"strings"
-	"time"
-	"crypto/tls"
+	"fmt"
 )
 
 var templates = template.Must(template.ParseFiles("web/header.html",
@@ -26,49 +22,11 @@ func init() {
 	http.HandleFunc("/view", pageView)
 	http.HandleFunc("/update", pageUpdate)
 	http.HandleFunc("/crawl", pageCrawl)
+	
+	http.HandleFunc("/clear", pageClear)
 
 	http.HandleFunc("/", pageRoot)
-
-	doc.SetGithubCredentials("94446b37edb575accd8b", "15f55815f0515a3f6ad057aaffa9ea83dceb220b")
 }
-
-//
-
-var (
-	dialTimeout    = 5 * time.Second
-	requestTimeout = 20 * time.Second
-)
-
-func timeoutDial(network, addr string) (net.Conn, error) {
-	return net.DialTimeout(network, addr, dialTimeout)
-}
-
-type transport struct {
-	t http.Transport
-}
-
-func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	timer := time.AfterFunc(requestTimeout, func() {
-		t.t.CancelRequest(req)
-		log.Printf("Canceled request for %s", req.URL)
-	})
-	defer timer.Stop()
-	resp, err := t.t.RoundTrip(req)
-	return resp, err
-}
-
-var httpTransport = &transport {
-	t: http.Transport {
-		Dial: timeoutDial,
-		ResponseHeaderTimeout: requestTimeout / 2,
-		TLSClientConfig: &tls.Config {
-			InsecureSkipVerify: true,
-		},
-	},
-}
-var httpClient = &http.Client{Transport: httpTransport}
-
-//
 
 func pageRoot(w http.ResponseWriter, r *http.Request) {
 	err := templates.ExecuteTemplate(w, "index.html", nil)
@@ -80,8 +38,9 @@ func pageRoot(w http.ResponseWriter, r *http.Request) {
 
 type ShowDocInfo struct {
 	DocInfo
-	Summary string
-	Imported     int
+	Summary      template.HTML
+	MaredName    template.HTML
+	MaredPackage template.HTML
 }
 
 type ShowResults struct {
@@ -89,18 +48,23 @@ type ShowResults struct {
 	Docs         []ShowDocInfo
 }
 
-func showSearchResults(results *SearchResult) *ShowResults {
+func markWord(word string) template.HTML {
+	return "<b>" + template.HTML(template.HTMLEscapeString(word)) + "</b>"
+}
+
+func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults {
 	docs := make([]ShowDocInfo, len(results.Docs))
 
 	for i, d := range results.Docs {
-		summary := d.Description
-		if len(summary) > 400 {
-			summary = summary[:400]
-		}
+		raw := selectSnippets(d.Description, tokens, 300)
+//		if len(raw) > 300 {
+//			raw = raw[:300] + "..."
+//		}
 		docs[i] = ShowDocInfo{
-			DocInfo: d,
-			Summary: summary,
-			Imported: len(d.ImportedPkgs),
+			DocInfo:      d,
+			MaredName:    markText(d.Name, tokens, markWord),
+			Summary:      markText(raw, tokens, markWord),
+			MaredPackage: markText(d.Package, tokens, markWord),
 		}
 	}
 	return &ShowResults{
@@ -112,7 +76,7 @@ func showSearchResults(results *SearchResult) *ShowResults {
 func pageSearch(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	q := strings.TrimSpace(r.FormValue("q"))
-	results, err := search(c, q)
+	results, tokens, err := search(c, q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -122,7 +86,7 @@ func pageSearch(w http.ResponseWriter, r *http.Request) {
 		Results *ShowResults
 	}{
 		Q:       q,
-		Results: showSearchResults(results),
+		Results: showSearchResults(results, tokens),
 	}
 	err = templates.ExecuteTemplate(w, "search.html", data)
 	if err != nil {
@@ -158,13 +122,11 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
+		
 		err = templates.ExecuteTemplate(w, "view.html", struct {
 			DocInfo
-			Imported int
 		}{
-			DocInfo:    doc,
-			Imported: len(doc.ImportedPkgs),
+			DocInfo: doc,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -178,7 +140,7 @@ func pageUpdate(w http.ResponseWriter, r *http.Request) {
 		c := appengine.NewContext(r)
 		updateImported(c, id)
 	}
-	
+
 	http.Redirect(w, r, "view?id="+template.URLQueryEscaper(id), 301)
 }
 
@@ -188,6 +150,27 @@ func pageCrawl(w http.ResponseWriter, r *http.Request) {
 		c := appengine.NewContext(r)
 		crawlPackage(c, id)
 	}
-	
+
 	http.Redirect(w, r, "view?id="+template.URLQueryEscaper(id), 301)
+}
+
+func pageClear(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	log.Println("Clearing import:import ...")
+	ts := NewTokenSet(c, "import:")
+	err := ts.Clear("import")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	log.Println("Clearing index:doc ...")
+	ts = NewTokenSet(c, "index:")
+	err = ts.Clear("doc")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	fmt.Fprintf(w, "Clear success!")
 }

@@ -1,5 +1,5 @@
 {{template "header.html"}}
-<h2>Package {{.Name}} ({{.StaticScore}}) <a href="update?id={{.Package}}">update</a></h2>
+<h2>Package {{.Name}} - {{.StarCount}} stars</h2>
 <div class="code">
     import "{{.Package}}"
 </div>
@@ -21,6 +21,10 @@
     </ol>
 <div>
     <a target="_blank" href="http://godoc.org/{{.Package}}">GoDoc</a>
-    | Last Updated: {{.LastUpdated}} (<a href="crawl?id={{.Package}}">crawl</a>)
+    | <a target="_blank" href="{{.ProjectURL}}">Project</a>
+    | Last Updated: {{.LastUpdated}}
+    | <a href="crawl?id={{.Package}}">crawl</a>
+    | <a href="update?id={{.Package}}">update</a>
+    | {{.StaticScore}}
 </div>    
 {{template "footer.html"}}

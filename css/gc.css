@@ -23,13 +23,27 @@ textarea#pkg {
 }
 
 .schres .title a, .schres .title a:link, .schres .title a:visited {
-    color: black;
+    color: #12c;
 }
 
 .schres .info {
-    color: green;
+    color: #093;
 }
 
 .code {
     font-family: courier new;
+}
+
+header {
+    border-bottom: 1px solid gray;
+}
+
+header a, footer a {
+    text-decoration: none;
+}
+
+footer {
+    border-top: 1px solid gray;
+    padding: 20px;
+    text-align: center;
 }
