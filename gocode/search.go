@@ -351,7 +351,6 @@ func updateDocument(c appengine.Context, pdoc *doc.Package) {
 	// Set initial values. Error is ignored
 	ddb.Get(pdoc.ImportPath, &d)
 	
-	
 	d.Name = pdoc.Name
 	d.Package = pdoc.ImportPath
 	d.Synopsis = pdoc.Synopsis
@@ -398,6 +397,10 @@ func updateDocument(c appengine.Context, pdoc *doc.Package) {
 	// update imported packages
 	for _, imp := range d.Imports {
 		updateImported(c, imp)
+	}
+	
+	if strings.HasPrefix(d.Package, "github.com/") {
+		appendPerson(c, "github.com", d.Author)
 	}
 }
 

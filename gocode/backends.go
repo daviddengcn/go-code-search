@@ -19,9 +19,13 @@ func crawlingLooop(c appengine.Context) {
 			break
 		}
 
+		var wg sync.WaitGroup
+		doNothing := true
+		
 		grps := groupToFetch(c)
 		if len(grps) > 0 {
-			var wg sync.WaitGroup
+			doNothing = true
+			
 			wg.Add(len(grps))
 			for _, pkgs := range grps {
 				go func(pkgs []string) {
@@ -34,7 +38,6 @@ func crawlingLooop(c appengine.Context) {
 					wg.Done()
 				}(pkgs)
 			}
-			wg.Wait()
 			/*
 			for len(grps) > 0 {
 				for host, pkgs := range grps {
@@ -56,7 +59,12 @@ func crawlingLooop(c appengine.Context) {
 				}
 			}
 			*/
-		} else {
+		}
+		
+		wg.Wait()
+		
+		if doNothing {
+			// sleep to avoid looping without sleeping
 			time.Sleep(10 * time.Second)
 		}
 	}

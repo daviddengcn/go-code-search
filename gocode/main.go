@@ -42,8 +42,8 @@ func pageRoot(w http.ResponseWriter, r *http.Request) {
 type ShowDocInfo struct {
 	DocInfo
 	Summary      template.HTML
-	MaredName    template.HTML
-	MaredPackage template.HTML
+	MarkedName    template.HTML
+	MarkedPackage template.HTML
 }
 
 type ShowResults struct {
@@ -59,15 +59,17 @@ func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults 
 	docs := make([]ShowDocInfo, len(results.Docs))
 
 	for i, d := range results.Docs {
+		if d.Name == "main" {
+			d.Name = "main - " + projectOfPackage(d.Package)
+		}
+		
 		raw := selectSnippets(d.Description, tokens, 300)
-//		if len(raw) > 300 {
-//			raw = raw[:300] + "..."
-//		}
+
 		docs[i] = ShowDocInfo{
 			DocInfo:      d,
-			MaredName:    markText(d.Name, tokens, markWord),
+			MarkedName:    markText(d.Name, tokens, markWord),
 			Summary:      markText(raw, tokens, markWord),
-			MaredPackage: markText(d.Package, tokens, markWord),
+			MarkedPackage: markText(d.Package, tokens, markWord),
 		}
 	}
 	return &ShowResults{

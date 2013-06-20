@@ -14,14 +14,14 @@
         {{range .Results.Docs}}
             <li>
                 <div class="title">
-                    <a target="_blank" href="/view?id={{.Package}}">{{.MaredName}}</a>
+                    <a target="_blank" href="/view?id={{.Package}}">{{if .MarkedName}}{{.MarkedName}}{{else}}({{.MarkedPackage}}){{end}}</a>
                     - {{len .ImportedPkgs}} refs
                     - {{.StarCount}} stars
                 </div>
                 <div class="summary">{{.Summary}}</div>
                 <div class="info">
-                    {{.MaredPackage}}
-                    - {{.Score}} ({{.MatchScore}}, {{.StaticScore}})
+                    {{.MarkedPackage}}
+                    - {{printf "%.2f" .Score}} ({{printf "%.2f" .MatchScore}}, {{printf "%.2f" .StaticScore}})
                 </div>
             </li>
         {{end}}
