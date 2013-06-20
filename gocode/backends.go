@@ -6,13 +6,14 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"sync"
 )
 
 var gRunning bool = false
 
 func crawlingLooop(c appengine.Context) {
 	log.Printf("Entering background loop...")
-	lastHost := ""
+	//lastHost := ""
 	for {
 		if !gRunning {
 			break
@@ -20,6 +21,21 @@ func crawlingLooop(c appengine.Context) {
 
 		grps := groupToFetch(c)
 		if len(grps) > 0 {
+			var wg sync.WaitGroup
+			wg.Add(len(grps))
+			for _, pkgs := range grps {
+				go func(pkgs []string) {
+					for _, pkg := range pkgs {
+						log.Printf("Crawling package %s ...", pkg)
+						crawlPackage(c, pkg)
+						time.Sleep(10 * time.Second)
+					}
+					
+					wg.Done()
+				}(pkgs)
+			}
+			wg.Wait()
+			/*
 			for len(grps) > 0 {
 				for host, pkgs := range grps {
 					pkg := pkgs[len(pkgs)-1]
@@ -39,6 +55,7 @@ func crawlingLooop(c appengine.Context) {
 					lastHost = host
 				}
 			}
+			*/
 		} else {
 			time.Sleep(10 * time.Second)
 		}

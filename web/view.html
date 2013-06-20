@@ -1,4 +1,4 @@
-{{template "header.html"}}
+{{template "header.html" (printf "%s - Package" .Name)}}
 <h2>Package {{.Name}} - {{.StarCount}} stars</h2>
 <div class="code">
     import "{{.Package}}"

@@ -9,8 +9,6 @@ import (
 	"time"
 	"unicode"
 	"math"
-	//"text/scanner"
-	//"bytes"
 	"github.com/daviddengcn/gddo/doc"
 	"unicode/utf8"
 	"html/template"
@@ -80,12 +78,16 @@ type DocInfo struct {
 	Author       string
 	LastUpdated  time.Time
 	StarCount    int
+	Synopsis     string   `datastore:",noindex"`
 	Description  string   `datastore:",noindex"`
 	Readme       string   `datastore:",noindex"`
 	ImportedPkgs []string `datastore:",noindex"`
 	StaticScore  float64  `datastore:",noindex"`
 	Imports      []string `datastore:",noindex"`
 	ProjectURL   string   `datastore:",noindex"`
+	
+	MatchScore  float64  `datastore:"-"`
+	Score       float64  `datastore:"-"`
 }
 
 func (doc *DocInfo) updateStaticScore() {
@@ -145,9 +147,9 @@ func (doc *DocInfo) updateStaticScore() {
 		}
 
 		if strings.HasPrefix(desc, "Package "+doc.Name) {
-			s += 1
-		} else if strings.HasPrefix(desc, "package "+doc.Name) {
 			s += 0.5
+		} else if strings.HasPrefix(desc, "package "+doc.Name) {
+			s += 0.4
 		}
 	}
 	
@@ -160,7 +162,7 @@ func (doc *DocInfo) updateStaticScore() {
 	doc.StaticScore = s
 }
 
-func (doc *DocInfo) loadFromDB(c appengine.Context, id string) error {
+func (doc *DocInfo) loadFromDB(c appengine.Context, id string) (err error, exists bool) {
 	ddb := NewDocDB(c, "doc")
 	return ddb.Get(id, doc)
 }
@@ -194,6 +196,34 @@ func appendTokens(text string, tokens villa.StrSet) villa.StrSet {
 	return tokens
 }
 
+func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
+	if len(tokens) == 0 {
+		return 1.
+	}
+	
+	s := float64(len(tokens))
+	
+	synopsis := strings.ToLower(doc.Synopsis)
+	name := strings.ToLower(doc.Name)
+	pkg := strings.ToLower(doc.Package)
+	
+	for token := range tokens {
+		if strings.Index(synopsis, token) >= 0 {
+			s += 0.1
+		}
+		
+		if strings.Index(name, token) >= 0 {
+			s += 0.5
+		}
+		
+		if strings.Index(pkg, token) >= 0 {
+			s += 0.1
+		}
+	}
+	
+	return s
+}
+
 func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) {
 	ts := NewTokenSet(c, "index:")
 
@@ -209,19 +239,24 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 
 	docs := make([]DocInfo, len(ids))
 	for i, id := range ids {
-		err := ddb.Get(id, &docs[i])
+		err, exists := ddb.Get(id, &docs[i])
 		if err != nil {
 			log.Printf("  ddb.Get(%s,) failed: %v", id, err)
 		}
 
-		if docs[i].StaticScore < 1 {
-			docs[i].updateStaticScore()
+		if exists {
+			if docs[i].StaticScore < 1 {
+				docs[i].updateStaticScore()
+			}
+			
+			docs[i].MatchScore = calcMatchScore(&docs[i], tokens)
+			docs[i].Score = (docs[i].StaticScore-0.9) * docs[i].MatchScore
 		}
 	}
 
 	villa.SortF(len(docs), func(i, j int) bool {
 		// Less
-		ssi, ssj := docs[i].StaticScore, docs[j].StaticScore
+		ssi, ssj := docs[i].Score, docs[j].Score
 		if ssi > ssj {
 			return true
 		}
@@ -278,9 +313,12 @@ func index(c appengine.Context, doc DocInfo) error {
 func updateImported(c appengine.Context, pkg string) {
 	log.Printf("  updateImported of %s ...", pkg)
 	var doc DocInfo
-	err := doc.loadFromDB(c, pkg)
-	if err != nil {
-		log.Printf("  [updateImported] ddb.Get(%s) failed: %v", pkg, err)
+	err, exists := doc.loadFromDB(c, pkg)
+	if !exists || err != nil {
+		// no such entity or fetching error, do nothing
+		if err != nil {
+			log.Printf("  [updateImported] ddb.Get(%s) failed: %v", pkg, err)
+		}
 		return
 	}
 
@@ -310,22 +348,25 @@ func updateDocument(c appengine.Context, pdoc *doc.Package) {
 	
 	ddb := NewDocDB(c, "doc")
 
-	// Set initial values
+	// Set initial values. Error is ignored
 	ddb.Get(pdoc.ImportPath, &d)
 	
 	
 	d.Name = pdoc.Name
 	d.Package = pdoc.ImportPath
+	d.Synopsis = pdoc.Synopsis
 	d.Description = pdoc.Doc
 	d.LastUpdated = time.Now()
 	d.Author = authorOfPackage(pdoc.ImportPath)
 	d.ProjectURL = pdoc.ProjectURL
 	if pdoc.StarCount >= 0 {
+		// if pdoc.StarCount < 0, it is not correctly fetched, remain old value
 		d.StarCount = pdoc.StarCount
 	}
 
 	//log.Printf("[updateDocument] pdoc.References: %v", pdoc.References)
 
+	d.Imports = nil
 	for _, imp := range pdoc.Imports {
 		if doc.IsValidRemotePath(imp) {
 			d.Imports = append(d.Imports, imp)
@@ -418,11 +459,10 @@ func score(scoreI, scoreGap, scoreJ, wholeLen, maxBytes int) int {
 }
 
 func selectSnippets(text string, tokens villa.StrSet, maxBytes int) string {
-	
 	if len(text) <= maxBytes {
 		return text
 	}
-	return text[:300] + "..."
+return text[:300] + "..."
 	
 	inBuf := []byte(text)
 	

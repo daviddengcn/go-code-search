@@ -24,11 +24,26 @@ func (db *DocDB) Put(id string, doc interface{}) error {
 	return err
 }
 
-func (db *DocDB) Get(id string, doc interface{}) error {
-	err := datastore.Get(db.c, datastore.NewKey(db.c, db.kind, id, 0, nil), doc)
+func (db *DocDB) Get(id string, doc interface{}) (err error, exists bool) {
+	err = datastore.Get(db.c, datastore.NewKey(db.c, db.kind, id, 0, nil), doc)
+	if err == datastore.ErrNoSuchEntity {
+		return nil, false
+	}
+	
+	if DocGetOk(err) {
+		return nil, true
+	}
+
+	return err, false
+}
+
+func DocGetOk(err error) bool {
+	if err == nil {
+		return true
+	}
 	_, ok := err.(*datastore.ErrFieldMismatch)
 	if ok {
-		return nil
+		return true
 	}
-	return err
+	return false
 }

@@ -12,7 +12,7 @@ import (
 
 var templates = template.Must(template.ParseFiles("web/header.html",
 	"web/footer.html", "web/index.html", "web/search.html", "web/add.html",
-	"web/view.html"))
+	"web/view.html", "web/crawler.html"))
 
 func init() {
 	http.HandleFunc("/_ah/start", startBackend)
@@ -22,10 +22,13 @@ func init() {
 	http.HandleFunc("/view", pageView)
 	http.HandleFunc("/update", pageUpdate)
 	http.HandleFunc("/crawl", pageCrawl)
+	http.HandleFunc("/crawler", pageCrawler)
 	
-	http.HandleFunc("/clear", pageClear)
+//	http.HandleFunc("/clear", pageClear)
 
 	http.HandleFunc("/", pageRoot)
+	
+	http.HandleFunc("/try", pageTry)
 }
 
 func pageRoot(w http.ResponseWriter, r *http.Request) {
@@ -117,9 +120,15 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 		c := appengine.NewContext(r)
 		ddb := NewDocDB(c, "doc")
 		var doc DocInfo
-		err := ddb.Get(id, &doc)
+		err, exists := ddb.Get(id, &doc)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		
+		if !exists {
+			fmt.Fprintf(w, `<html><body>No such entry! Click to <a href="crawl?id=%s">crawl</a>.</body></html>`,
+				template.URLQueryEscaper(id))
 			return
 		}
 		
@@ -154,6 +163,15 @@ func pageCrawl(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "view?id="+template.URLQueryEscaper(id), 301)
 }
 
+func pageCrawler(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	err := templates.ExecuteTemplate(w, "crawler.html", fetchCrawlerInfo(c))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+
 func pageClear(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	log.Println("Clearing import:import ...")
@@ -173,4 +191,11 @@ func pageClear(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	fmt.Fprintf(w, "Clear success!")
+}
+
+func pageTry(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	fmt.Fprintf(w, "<html><body><pre>")
+	tryCrawlPackage(c, w, "github.com/FlyingCar/haunts/game")
+	fmt.Fprintf(w, "</pre>")
 }
