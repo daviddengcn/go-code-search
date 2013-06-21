@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	
+
 	"fmt"
 )
 
@@ -97,7 +97,7 @@ func scheduledPackage(c appengine.Context, pkg string, sTime time.Time) {
 
 const (
 	DefaultPackageAge = 72 * time.Hour
-    DefaultPersonAge  = 72 * time.Hour
+	DefaultPersonAge  = 72 * time.Hour
 )
 
 func appendPackage(c appengine.Context, pkg string) {
@@ -106,7 +106,7 @@ func appendPackage(c appengine.Context, pkg string) {
 		return
 	}
 	ddb := NewDocDB(c, "crawler")
-	
+
 	var ent CrawlingEntry
 	err, exists := ddb.Get(pkg, &ent)
 	if exists {
@@ -134,7 +134,7 @@ func parsePersonId(id string) (site, username string) {
 
 func scheduledPerson(c appengine.Context, site, username string, sTime time.Time) {
 	var ent CrawlingEntry
-	
+
 	id := idOfPerson(site, username)
 
 	key := datastore.NewKey(c, "crawler-person", id, 0, nil)
@@ -161,9 +161,9 @@ func scheduledPerson(c appengine.Context, site, username string, sTime time.Time
 
 func appendPerson(c appengine.Context, site, username string) {
 	ddb := NewDocDB(c, "crawler-person")
-	
+
 	id := idOfPerson(site, username)
-	
+
 	var ent CrawlingEntry
 	err, exists := ddb.Get(id, &ent)
 	if exists {
@@ -184,10 +184,10 @@ func groupToFetch(c appengine.Context) (groups map[string][]string) {
 	pkgCount := 0
 	oldest := time.Now()
 	var oldestPkg string
-	
+
 	groups = make(map[string][]string)
 	q := datastore.NewQuery("crawler").Filter("ScheduleTime<", time.Now()).Order("ScheduleTime")
-	
+
 	t := q.Run(c)
 	for {
 		var ent CrawlingEntry
@@ -214,15 +214,15 @@ func groupToFetch(c appengine.Context) (groups map[string][]string) {
 		}
 
 		groups[host] = append(groups[host], pkg)
-		
+
 		if ent.ScheduleTime.Before(oldest) {
 			oldest = ent.ScheduleTime
 			oldestPkg = pkg
 		}
-		pkgCount ++
+		pkgCount++
 	}
 
-	log.Printf("[groupToFetch] got %d groups, %d packages, oldest %v(%v): %v", len(groups), pkgCount, oldest, time.Now().Sub(oldest) ,oldestPkg)
+	log.Printf("[groupToFetch] got %d groups, %d packages, oldest %v(%v): %v", len(groups), pkgCount, oldest, time.Now().Sub(oldest), oldestPkg)
 
 	return groups
 }
@@ -246,10 +246,9 @@ func crawlPackage(c appengine.Context, pkg string) {
 		}
 	}
 	scheduledPackage(c, pkg, time.Now().Add(DefaultPackageAge).Add(
-		time.Duration(rand.Int63n(int64(DefaultPackageAge)/10) - 
-		int64(DefaultPackageAge)/5)))
+		time.Duration(rand.Int63n(int64(DefaultPackageAge)/10)-
+			int64(DefaultPackageAge)/5)))
 }
-
 
 // debug function //
 func tryCrawlPackage(c appengine.Context, w http.ResponseWriter, pkg string) {
@@ -265,7 +264,7 @@ func tryCrawlPackage(c appengine.Context, w http.ResponseWriter, pkg string) {
 }
 
 type HostInfo struct {
-	Host string
+	Host      string
 	Total     int
 	NeedCrawl int
 }
@@ -273,8 +272,8 @@ type HostInfo struct {
 type CrawlerInfo struct {
 	Total     int
 	NeedCrawl int
-	
-	Hosts     []HostInfo
+
+	Hosts []HostInfo
 }
 
 func fetchCrawlerInfo(c appengine.Context) (info CrawlerInfo) {
@@ -286,7 +285,7 @@ func fetchCrawlerInfo(c appengine.Context) (info CrawlerInfo) {
 		log.Printf("  crawler.Count() failed: %v", err)
 		info.Total = -1
 	}
-	
+
 	q = datastore.NewQuery("crawler").Project("Host").Distinct()
 	var ents []CrawlingEntry
 	_, err = q.GetAll(c, &ents)
@@ -302,14 +301,14 @@ func fetchCrawlerInfo(c appengine.Context) (info CrawlerInfo) {
 			info.Hosts[i].NeedCrawl, _ = q.Count(c)
 		}
 	}
-	
+
 	q = datastore.NewQuery("crawler").Filter("ScheduleTime<", now)
 	info.NeedCrawl, err = q.Count(c)
 	if err != nil {
 		log.Printf("  crawler.ScheduleTIme<time.Now().Count() failed: %v", err)
 		info.NeedCrawl = -1
 	}
-	
+
 	return
 }
 
@@ -317,29 +316,43 @@ func fetchCrawlerInfo(c appengine.Context) (info CrawlerInfo) {
 func crawlPerson(c appengine.Context, id string) {
 	site, username := parsePersonId(id)
 	//log.Printf("Crawling person %s/%s", site, username)
-	p, err := doc.GetGithubPerson(httpClient, map[string]string{"owner":username})
-	if err != nil {
-		log.Printf("[crawlPerson] doc.GetGithubPerson(%s) failed: %v", username, err)
-	} else {
-		log.Printf("[crawlPerson] doc.GetGithubPerson(%s) sucess: %d projects", username, len(p.Projects))
-		
-		for _, proj := range p.Projects {
-			appendPackage(c, proj)
+	switch site {
+	case "github.com":
+		p, err := doc.GetGithubPerson(httpClient, map[string]string{"owner": username})
+		if err != nil {
+			log.Printf("[crawlPerson] doc.GetGithubPerson(%s) failed: %v", username, err)
+		} else {
+			log.Printf("[crawlPerson] doc.GetGithubPerson(%s) sucess: %d projects", username, len(p.Projects))
+	
+			for _, proj := range p.Projects {
+				appendPackage(c, proj)
+			}
+		}
+	case "bitbucket.org":
+		p, err := doc.GetBitbucketPerson(httpClient, map[string]string{"owner": username})
+		if err != nil {
+			log.Printf("[crawlPerson] doc.GetBitbucketPerson(%s) failed: %v", username, err)
+		} else {
+			log.Printf("[crawlPerson] doc.GetBitbucketPerson(%s) sucess: %d projects", username, len(p.Projects))
+	
+			for _, proj := range p.Projects {
+				appendPackage(c, proj)
+			}
 		}
 	}
 	scheduledPerson(c, site, username, time.Now().Add(DefaultPersonAge).Add(
-		time.Duration(rand.Int63n(int64(DefaultPersonAge)/10) - 
-		int64(DefaultPersonAge)/5)))
+		time.Duration(rand.Int63n(int64(DefaultPersonAge)/10)-
+			int64(DefaultPersonAge)/5)))
 }
 
 func groupToFetchPerson(c appengine.Context) (groups map[string][]string) {
 	pkgCount := 0
 	oldest := time.Now()
 	var oldestPkg string
-	
+
 	groups = make(map[string][]string)
 	q := datastore.NewQuery("crawler-person").Filter("ScheduleTime<", time.Now()).Order("ScheduleTime")
-	
+
 	t := q.Run(c)
 	for {
 		var ent CrawlingEntry
@@ -350,7 +363,7 @@ func groupToFetchPerson(c appengine.Context) (groups map[string][]string) {
 
 		if err != nil {
 			if !DocGetOk(err) {
-				log.Printf("[groupToFetch] t.Next failed: %#v", err)
+				log.Printf("[groupToFetchPerson] t.Next failed: %#v", err)
 				break
 			}
 		}
@@ -366,16 +379,32 @@ func groupToFetchPerson(c appengine.Context) (groups map[string][]string) {
 		}
 
 		groups[host] = append(groups[host], pkg)
-		
+
 		if ent.ScheduleTime.Before(oldest) {
 			oldest = ent.ScheduleTime
 			oldestPkg = pkg
 		}
-		pkgCount ++
+		pkgCount++
 	}
 
 	log.Printf("[groupToFetchPerson] got %d groups, %d persons, oldest %v(%v): %v",
-		len(groups), pkgCount, oldest, time.Now().Sub(oldest) ,oldestPkg)
+		len(groups), pkgCount, oldest, time.Now().Sub(oldest), oldestPkg)
 
 	return groups
+}
+
+func findCrawlPackage(c appengine.Context, pkg string) (*CrawlingEntry, error) {
+	ddb := NewDocDB(c, "crawler")
+	
+	var ent CrawlingEntry
+	err, exists := ddb.Get(pkg, &ent)
+	if exists {
+		return &ent, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	
+	return nil, nil
 }

@@ -5,8 +5,8 @@ import (
 	"appengine/runtime"
 	"log"
 	"net/http"
-	"time"
 	"sync"
+	"time"
 )
 
 var gRunning bool = false
@@ -21,11 +21,11 @@ func crawlingLooop(c appengine.Context) {
 
 		var wg sync.WaitGroup
 		doNothing := true
-		
+
 		grps := groupToFetch(c)
 		if len(grps) > 0 {
 			doNothing = false
-			
+
 			wg.Add(len(grps))
 			for _, pkgs := range grps {
 				go func(pkgs []string) {
@@ -34,55 +34,53 @@ func crawlingLooop(c appengine.Context) {
 						crawlPackage(c, pkg)
 						time.Sleep(10 * time.Second)
 					}
-					
+
 					wg.Done()
 				}(pkgs)
 			}
 			/*
-			for len(grps) > 0 {
-				for host, pkgs := range grps {
-					pkg := pkgs[len(pkgs)-1]
-					pkgs = pkgs[:len(pkgs)-1]
-					if len(pkgs) == 0 {
-						delete(grps, host)
-					} else {
-						grps[host] = pkgs
+				for len(grps) > 0 {
+					for host, pkgs := range grps {
+						pkg := pkgs[len(pkgs)-1]
+						pkgs = pkgs[:len(pkgs)-1]
+						if len(pkgs) == 0 {
+							delete(grps, host)
+						} else {
+							grps[host] = pkgs
+						}
+
+						if lastHost == host {
+							time.Sleep(10 * time.Second)
+						}
+
+						log.Printf("Crawling package %s ...", pkg)
+						crawlPackage(c, pkg)
+						lastHost = host
 					}
-					
-					if lastHost == host {
-						time.Sleep(10 * time.Second)
-					}
-	
-					log.Printf("Crawling package %s ...", pkg)
-					crawlPackage(c, pkg)
-					lastHost = host
 				}
-			}
 			*/
 		}
-		
+
 		grps = groupToFetchPerson(c)
 		if len(grps) > 0 {
 			doNothing = false
-			
+
 			wg.Add(len(grps))
 			for site, persons := range grps {
 				go func(site string, persons []string) {
-					if site == "github.com" {
-						for _, p := range persons {
-							log.Printf("Crawling person %s ...", p)
-							crawlPerson(c, p)
-							time.Sleep(10 * time.Second)
-						}
+					for _, p := range persons {
+						log.Printf("Crawling person %s ...", p)
+						crawlPerson(c, p)
+						time.Sleep(10 * time.Second)
 					}
-					
+
 					wg.Done()
 				}(site, persons)
 			}
 		}
-		
+
 		wg.Wait()
-		
+
 		if doNothing {
 			// sleep to avoid looping without sleeping
 			time.Sleep(10 * time.Second)

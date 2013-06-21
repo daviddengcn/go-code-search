@@ -29,7 +29,7 @@ func (db *DocDB) Get(id string, doc interface{}) (err error, exists bool) {
 	if err == datastore.ErrNoSuchEntity {
 		return nil, false
 	}
-	
+
 	if DocGetOk(err) {
 		return nil, true
 	}

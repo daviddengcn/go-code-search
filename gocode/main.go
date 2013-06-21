@@ -2,12 +2,12 @@ package gocode
 
 import (
 	"appengine"
-	"html/template"
+	"fmt"
 	"github.com/daviddengcn/go-villa"
+	"html/template"
 	"log"
 	"net/http"
 	"strings"
-	"fmt"
 )
 
 var templates = template.Must(template.ParseFiles("web/header.html",
@@ -23,12 +23,12 @@ func init() {
 	http.HandleFunc("/update", pageUpdate)
 	http.HandleFunc("/crawl", pageCrawl)
 	http.HandleFunc("/crawler", pageCrawler)
-	
-//	http.HandleFunc("/clear", pageClear)
+
+	//	http.HandleFunc("/clear", pageClear)
 
 	http.HandleFunc("/", pageRoot)
-	
-//	http.HandleFunc("/try", pageTry)
+
+	http.HandleFunc("/try", pageTry)
 }
 
 func pageRoot(w http.ResponseWriter, r *http.Request) {
@@ -66,18 +66,18 @@ func markWord(word string) template.HTML {
 
 func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults {
 	docs := make([]ShowDocInfo, 0, len(results.Docs))
-	
+
 	projToIdx := make(map[string]int)
 	folded := 0
 
-	mainLoop:
+mainLoop:
 	for _, d := range results.Docs {
 		if d.Name == "main" {
 			d.Name = "main - " + projectOfPackage(d.Package)
 		}
-		
+
 		markedName := markText(d.Name, tokens, markWord)
-		
+
 		parts := strings.Split(d.Package, "/")
 		if len(parts) > 2 {
 			for i := len(parts) - 1; i >= 2; i-- {
@@ -89,13 +89,13 @@ func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults 
 						SubPath:    "/" + strings.Join(parts[i:], "/"),
 						Info:       d.Synopsis,
 					})
-					folded ++
+					folded++
 					continue mainLoop
 				}
 			}
 		}
-		
-		raw := selectSnippets(d.Description + "\n" + d.ReadmeData, tokens, 300)
+
+		raw := selectSnippets(d.Description+"\n"+d.ReadmeData, tokens, 300)
 
 		projToIdx[d.Package] = len(docs)
 		docs = append(docs, ShowDocInfo{
@@ -105,7 +105,7 @@ func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults 
 			MarkedPackage: markText(d.Package, tokens, markWord),
 		})
 	}
-	
+
 	return &ShowResults{
 		TotalResults: results.TotalResults,
 		Folded:       folded,
@@ -152,7 +152,7 @@ func pageAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func pageView(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("id")
+	id := strings.TrimSpace(r.FormValue("id"))
 	if id != "" {
 		c := appengine.NewContext(r)
 		ddb := NewDocDB(c, "doc")
@@ -162,13 +162,22 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		
+
 		if !exists {
-			fmt.Fprintf(w, `<html><body>No such entry! Click to <a href="crawl?id=%s">crawl</a>.</body></html>`,
+			fmt.Fprintf(w, `<html><body>No such entry!`)
+
+			ent, _ := findCrawlPackage(c, id)
+			if ent != nil {
+				fmt.Fprintf(w, ` Scheduled to be crawled at %s`,
+					ent.ScheduleTime.Format("2006-01-02 15:04:05"))
+			} else {
+				fmt.Fprintf(w, ` Not found yet!`)
+			}
+			fmt.Fprintf(w, ` Click to <a href="crawl?id=%s">crawl</a>.</body></html>`,
 				template.URLQueryEscaper(id))
 			return
 		}
-		
+
 		err = templates.ExecuteTemplate(w, "view.html", struct {
 			DocInfo
 		}{
@@ -208,7 +217,6 @@ func pageCrawler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-
 func pageClear(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	log.Println("Clearing import:import ...")
@@ -218,7 +226,7 @@ func pageClear(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	log.Println("Clearing index:doc ...")
 	ts = NewTokenSet(c, "index:")
 	err = ts.Clear("doc")
@@ -226,11 +234,11 @@ func pageClear(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	fmt.Fprintf(w, "Clear success!")
 }
 
 func pageTry(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	crawlPerson(c, idOfPerson("github.com", "daviddengcn"))
+	crawlPerson(c, idOfPerson("bitbucket.org", "kardianos"))
 }

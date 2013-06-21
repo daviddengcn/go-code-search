@@ -2,17 +2,17 @@ package gocode
 
 import (
 	"appengine"
+	"bytes"
+	"github.com/daviddengcn/gddo/doc"
 	"github.com/daviddengcn/go-villa"
+	"html/template"
 	"log"
+	"math"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
-	"math"
-	"github.com/daviddengcn/gddo/doc"
 	"unicode/utf8"
-	"html/template"
-	"bytes"
 )
 
 type SearchResult struct {
@@ -86,9 +86,9 @@ type DocInfo struct {
 	ProjectURL   string   `datastore:",noindex"`
 	ReadmeFn     string   `datastore:",noindex"`
 	ReadmeData   string   `datastore:",noindex"`
-	
-	MatchScore  float64  `datastore:"-"`
-	Score       float64  `datastore:"-"`
+
+	MatchScore float64 `datastore:"-"`
+	Score      float64 `datastore:"-"`
 }
 
 func (doc *DocInfo) updateStaticScore() {
@@ -153,13 +153,13 @@ func (doc *DocInfo) updateStaticScore() {
 			s += 0.4
 		}
 	}
-	
+
 	starCount := doc.StarCount - 3
 	if starCount < 0 {
 		starCount = 0
 	}
-	s += math.Sqrt(float64(starCount))*0.5
-	
+	s += math.Sqrt(float64(starCount)) * 0.5
+
 	doc.StaticScore = s
 }
 
@@ -198,30 +198,30 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 }
 
 func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
-	s := float64(0.02*float64(len(tokens)))
-	
 	if len(tokens) == 0 {
-		return s
+		return 1.
 	}
-	
+
+	s := float64(0.02 * float64(len(tokens)))
+
 	synopsis := strings.ToLower(doc.Synopsis)
 	name := strings.ToLower(doc.Name)
 	pkg := strings.ToLower(doc.Package)
-	
+
 	for token := range tokens {
 		if strings.Index(synopsis, token) >= 0 {
 			s += 0.25
 		}
-		
+
 		if strings.Index(name, token) >= 0 {
 			s += 0.4
 		}
-		
+
 		if strings.Index(pkg, token) >= 0 {
 			s += 0.1
 		}
 	}
-	
+
 	return s
 }
 
@@ -249,9 +249,9 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 			if docs[i].StaticScore < 1 {
 				docs[i].updateStaticScore()
 			}
-			
+
 			docs[i].MatchScore = calcMatchScore(&docs[i], tokens)
-			docs[i].Score = (docs[i].StaticScore-0.9) * docs[i].MatchScore
+			docs[i].Score = (docs[i].StaticScore - 0.9) * docs[i].MatchScore
 		}
 	}
 
@@ -264,7 +264,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 		if ssi < ssj {
 			return false
 		}
-		
+
 		sci, scj := docs[i].StarCount, docs[j].StarCount
 		if sci > scj {
 			return true
@@ -354,12 +354,12 @@ func updateImported(c appengine.Context, pkg string) {
 
 func updateDocument(c appengine.Context, pdoc *doc.Package) {
 	var d DocInfo
-	
+
 	ddb := NewDocDB(c, "doc")
 
 	// Set initial values. Error is ignored
 	ddb.Get(pdoc.ImportPath, &d)
-	
+
 	d.Name = pdoc.Name
 	d.Package = pdoc.ImportPath
 	d.Synopsis = pdoc.Synopsis
@@ -371,12 +371,12 @@ func updateDocument(c appengine.Context, pdoc *doc.Package) {
 		// if pdoc.StarCount < 0, it is not correctly fetched, remain old value
 		d.StarCount = pdoc.StarCount
 	}
-	
+
 	d.ReadmeFn, d.ReadmeData = "", ""
 	for fn, data := range pdoc.ReadmeFiles {
 		d.ReadmeFn, d.ReadmeData = fn, string(data)
 	}
-//log.Printf("Readme of %s: %v", d.Package, pdoc.ReadmeFiles)
+	//log.Printf("Readme of %s: %v", d.Package, pdoc.ReadmeFiles)
 
 	//log.Printf("[updateDocument] pdoc.References: %v", pdoc.References)
 
@@ -413,9 +413,11 @@ func updateDocument(c appengine.Context, pdoc *doc.Package) {
 	for _, imp := range d.Imports {
 		updateImported(c, imp)
 	}
-	
+
 	if strings.HasPrefix(d.Package, "github.com/") {
 		appendPerson(c, "github.com", d.Author)
+	} else if strings.HasPrefix(d.Package, "bitbucket.org/") {
+		appendPerson(c, "bitbucket.org", d.Author)
 	}
 }
 
@@ -449,7 +451,7 @@ func markText(text string, tokens villa.StrSet, markFunc func(word string) templ
 				break
 			}
 		}
-		
+
 		// word
 		for !isTermSep(r) {
 			p += sz
@@ -468,7 +470,7 @@ func markText(text string, tokens villa.StrSet, markFunc func(word string) templ
 		}
 		inBuf, p = inBuf[p:], 0
 	}
-	
+
 	return template.HTML(outBuf.String())
 }
 
@@ -484,10 +486,10 @@ func splitToLines(text string) []string {
 		if len(line) == 0 {
 			continue
 		}
-		
+
 		newLines = append(newLines, line)
 	}
-	
+
 	return newLines
 }
 
@@ -510,7 +512,7 @@ func selectSnippets(text string, tokens villa.StrSet, maxBytes int) string {
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		lines[i] = line
-		
+
 		lineTokens := appendTokens(nil, line)
 		reserve := false
 		for token := range tokens {
@@ -519,49 +521,49 @@ func selectSnippets(text string, tokens villa.StrSet, maxBytes int) string {
 				hitTokens.Put(token)
 			}
 		}
-		
-		if i == 0 || reserve {
-			selLines = append(selLines, lineinfo {
-				idx: i,
+
+		if i == 0 || reserve && (count+len(line)+1 < maxBytes) {
+			selLines = append(selLines, lineinfo{
+				idx:  i,
 				line: line,
-			});
+			})
 			count += len(line) + 1
-			if count >= maxBytes {
+			if count == maxBytes {
 				break
 			}
-			
+
 			lines[i] = ""
 		}
 	}
-	
+
 	if count < maxBytes {
 		for i, line := range lines {
 			if len(line) == 0 {
 				continue
 			}
-			
-			if count + len(line) >= maxBytes {
+
+			if count+len(line) >= maxBytes {
 				break
 			}
-			
-			selLines = append(selLines, lineinfo {
-				idx: i,
+
+			selLines = append(selLines, lineinfo{
+				idx:  i,
 				line: line,
 			})
-			
+
 			count += len(line) + 1
 		}
-		
+
 		villa.SortF(len(selLines), func(i, j int) bool {
 			return selLines[i].idx < selLines[j].idx
 		}, func(i, j int) {
 			selLines[i], selLines[j] = selLines[j], selLines[i]
 		})
 	}
-	
+
 	var outBuf bytes.Buffer
 	for i, line := range selLines {
-		if line.idx > 1 && (i < 1 || line.idx != selLines[i - 1].idx + 1) {
+		if line.idx > 1 && (i < 1 || line.idx != selLines[i-1].idx+1) {
 			outBuf.WriteString("...")
 		} else {
 			if i > 0 {
@@ -570,10 +572,10 @@ func selectSnippets(text string, tokens villa.StrSet, maxBytes int) string {
 		}
 		outBuf.WriteString(line.line)
 	}
-	
-	if selLines[len(selLines) - 1].idx != len(lines) - 1 {
+
+	if selLines[len(selLines)-1].idx != len(lines)-1 {
 		outBuf.WriteString("...")
 	}
-	
+
 	return outBuf.String()
 }

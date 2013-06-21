@@ -25,7 +25,7 @@ type IndexEntry struct {
 
 func (ts *TokenSet) Clear(field string) error {
 	for {
-		q := datastore.NewQuery(ts.typePrefix+field)
+		q := datastore.NewQuery(ts.typePrefix + field)
 		cnt, err := q.Count(ts.c)
 		if err != nil {
 			return err
@@ -34,8 +34,8 @@ func (ts *TokenSet) Clear(field string) error {
 			return nil
 		}
 		log.Printf("    [ts.Clear] %d items left", cnt)
-		
-		q = datastore.NewQuery(ts.typePrefix+field).KeysOnly().Limit(1000)
+
+		q = datastore.NewQuery(ts.typePrefix + field).KeysOnly().Limit(1000)
 		keys, err := q.GetAll(ts.c, nil)
 		if err != nil {
 			return err
@@ -49,12 +49,12 @@ func (ts *TokenSet) Clear(field string) error {
 }
 
 func (ts *TokenSet) Index(field, id string, tokens villa.StrSet) error {
-	log.Printf("    [ts.Index] Adding %d tokens for field:%s id:%s", 
+	log.Printf("    [ts.Index] Adding %d tokens for field:%s id:%s",
 		len(tokens), field, id)
 	_, err := datastore.Put(ts.c, datastore.NewKey(ts.c, ts.typePrefix+field,
 		id, 0, nil), &IndexEntry{
-			Tokens: tokens.Elements(),
-		})
+		Tokens: tokens.Elements(),
+	})
 	if err != nil {
 		return err
 	}
@@ -63,12 +63,12 @@ func (ts *TokenSet) Index(field, id string, tokens villa.StrSet) error {
 }
 
 func (ts *TokenSet) Search(field string, tokens villa.StrSet) ([]string, error) {
-	q := datastore.NewQuery(ts.typePrefix+field)
+	q := datastore.NewQuery(ts.typePrefix + field)
 	for token := range tokens {
 		q = q.Filter("Tokens=", token)
 	}
 	q = q.KeysOnly()
-	
+
 	keys, err := q.GetAll(ts.c, nil)
 	if err != nil {
 		return nil, err
@@ -79,15 +79,15 @@ func (ts *TokenSet) Search(field string, tokens villa.StrSet) ([]string, error) 
 		res[i] = key.StringID()
 	}
 	log.Printf("    [ts.Search] %d entries for tokens %v", len(res), tokens)
-	
+
 	return res, nil
 }
 
 func (ts *TokenSet) Count(field string, tokens villa.StrSet) (int, error) {
-	q := datastore.NewQuery(ts.typePrefix+field)
+	q := datastore.NewQuery(ts.typePrefix + field)
 	for token := range tokens {
 		q = q.Filter("Tokens=", token)
 	}
-	
+
 	return q.Count(ts.c)
 }
