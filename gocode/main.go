@@ -197,7 +197,5 @@ func pageClear(w http.ResponseWriter, r *http.Request) {
 
 func pageTry(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	fmt.Fprintf(w, "<html><body><pre>")
-	tryCrawlPackage(c, w, "github.com/FlyingCar/haunts/game")
-	fmt.Fprintf(w, "</pre>")
+	crawlPerson(c, idOfPerson("github.com", "daviddengcn"))
 }

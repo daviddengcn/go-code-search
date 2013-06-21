@@ -25,8 +25,12 @@ textarea#pkg {
     color: #12c;
 }
 
-.schres .info {
+.schres .info, .schres .info a {
     color: #093;
+}
+
+.schres .info a {
+    text-decoration: none;
 }
 
 .code {

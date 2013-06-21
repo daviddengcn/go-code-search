@@ -24,7 +24,7 @@ func crawlingLooop(c appengine.Context) {
 		
 		grps := groupToFetch(c)
 		if len(grps) > 0 {
-			doNothing = true
+			doNothing = false
 			
 			wg.Add(len(grps))
 			for _, pkgs := range grps {
@@ -59,6 +59,26 @@ func crawlingLooop(c appengine.Context) {
 				}
 			}
 			*/
+		}
+		
+		grps = groupToFetchPerson(c)
+		if len(grps) > 0 {
+			doNothing = false
+			
+			wg.Add(len(grps))
+			for site, persons := range grps {
+				go func(site string, persons []string) {
+					if site == "github.com" {
+						for _, p := range persons {
+							log.Printf("Crawling person %s ...", p)
+							crawlPerson(c, p)
+							time.Sleep(10 * time.Second)
+						}
+					}
+					
+					wg.Done()
+				}(site, persons)
+			}
 		}
 		
 		wg.Wait()

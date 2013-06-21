@@ -180,7 +180,7 @@ func normWord(word string) string {
 	return strings.ToLower(word)
 }
 
-func appendTokens(text string, tokens villa.StrSet) villa.StrSet {
+func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	for _, token := range strings.FieldsFunc(text, isTermSep) {
 		token = normWord(token)
 		tokens.Put(token)
@@ -227,7 +227,7 @@ func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
 func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) {
 	ts := NewTokenSet(c, "index:")
 
-	tokens := appendTokens(q, nil)
+	tokens := appendTokens(nil, q)
 
 	ids, err := ts.Search("doc", tokens)
 	if err != nil {
@@ -287,11 +287,11 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 func index(c appengine.Context, doc DocInfo) error {
 	ts := NewTokenSet(c, "index:")
 	var tokens villa.StrSet
-	tokens = appendTokens(doc.Name, tokens)
-	tokens = appendTokens(doc.Package, tokens)
-	tokens = appendTokens(doc.Description, tokens)
-	tokens = appendTokens(doc.Readme, tokens)
-	tokens = appendTokens(doc.Author, tokens)
+	tokens = appendTokens(tokens, doc.Name)
+	tokens = appendTokens(tokens, doc.Package)
+	tokens = appendTokens(tokens, doc.Description)
+	tokens = appendTokens(tokens, doc.Readme)
+	tokens = appendTokens(tokens, doc.Author)
 
 	id := doc.Package
 
@@ -461,105 +461,104 @@ func score(scoreI, scoreGap, scoreJ, wholeLen, maxBytes int) int {
 	return scoreI + scoreJ + (wholeLen - maxBytes)
 }
 
+func splitToLines(text string) []string {
+	lines := strings.Split(text, "\n")
+	newLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		
+		newLines = append(newLines, line)
+	}
+	
+	return newLines
+}
+
 func selectSnippets(text string, tokens villa.StrSet, maxBytes int) string {
+	text = strings.TrimSpace(text)
 	if len(text) <= maxBytes {
 		return text
 	}
-return text[:300] + "..."
-	
-	inBuf := []byte(text)
-	
-	wordStarts, wordEnds := []int{}, []int{}
-	p, pIn := 0, 0
-	r, sz := utf8.DecodeRune(inBuf)
-	for pIn < len(inBuf) {
-		// seperator
-		for isTermSep(r) {
-			p += sz
-			if pIn+p < len(inBuf) {
-				r, sz = utf8.DecodeRune(inBuf[pIn+p:])
-			} else {
-				break
-			}
-		}
-		if p > 0 {
-			pIn, p = pIn+p, 0
-			if pIn == len(inBuf) {
-				break
+	// return text[:maxBytes] + "..."
+
+	lines := splitToLines(text)
+
+	var hitTokens villa.StrSet
+	type lineinfo struct {
+		idx  int
+		line string
+	}
+	var selLines []lineinfo
+	count := 0
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		lines[i] = line
+		
+		lineTokens := appendTokens(nil, line)
+		reserve := false
+		for token := range tokens {
+			if !hitTokens.In(token) && lineTokens.In(token) {
+				reserve = true
+				hitTokens.Put(token)
 			}
 		}
 		
-		// word
-		for !isTermSep(r) {
-			p += sz
-			if pIn+p < len(inBuf) {
-				r, sz = utf8.DecodeRune(inBuf[pIn+p:])
-			} else {
+		if i == 0 || reserve {
+			selLines = append(selLines, lineinfo {
+				idx: i,
+				line: line,
+			});
+			count += len(line) + 1
+			if count >= maxBytes {
 				break
 			}
+			
+			lines[i] = ""
 		}
-		wordStarts = append(wordStarts, pIn)
-		wordEnds = append(wordEnds, pIn+p)
-		
-		pIn, p = pIn+p, 0
 	}
 	
-	log.Printf("starts: %v, ends: %v", wordStarts, wordEnds)
-	
-	tokenList := tokens.Elements()
-	tokenIndexes := make(map[string]int)
-	for i, token := range tokenList {
-		// 0 for not a token
-		tokenIndexes[token] = i + 1
-	}
-	
-	tokenCountI := make([]int, len(tokenList))
-	tokenCountJ := make([]int, len(tokenList))
-	
-	bestS := -1
-	var bestI, bestJ int
-	
-	scoreI := 0
-	for i := range wordEnds {
-		wholeLen := wordEnds[i]
-		if wholeLen > maxBytes {
-			break
-		}
-		
-		idx1 := tokenIndexes[tokenList[i]]
-		if idx1 > 0 {
-			idx := idx1 - 1
-			if tokenCountI[idx] == 0 {
-				scoreI += 100
-			} else {
-				scoreI += 10
+	if count < maxBytes {
+		for i, line := range lines {
+			if len(line) == 0 {
+				continue
 			}
-			tokenCountI[idx] ++
-		}
-		
-		s := score(scoreI, 50, 0, wholeLen, maxBytes)
-		if s > bestS {
-			bestS = s
-			bestI, bestJ = i, -1
-		}
-		
-		copy(tokenCountJ, tokenCountI)
-		scoreJ := 0
-		leftLen := maxBytes - wholeLen
-		var k int
-		for k = i + 1; k < len(wordEnds); k ++ {
-			if wordEnds[k] - wordStarts[i + 1] > leftLen {
+			
+			if count + len(line) >= maxBytes {
 				break
 			}
-		}
-		for j := i + 1; j < len(wordEnds); j ++ {
-			//s := score(scoreI, 0, scoreJ
+			
+			selLines = append(selLines, lineinfo {
+				idx: i,
+				line: line,
+			})
+			
+			count += len(line) + 1
 		}
 		
-		_ = scoreJ
+		villa.SortF(len(selLines), func(i, j int) bool {
+			return selLines[i].idx < selLines[j].idx
+		}, func(i, j int) {
+			selLines[i], selLines[j] = selLines[j], selLines[i]
+		})
 	}
 	
-	_, _ = bestI, bestJ
+	var outBuf bytes.Buffer
+	for i, line := range selLines {
+		if line.idx > 1 && (i < 1 || line.idx != selLines[i - 1].idx + 1) {
+			outBuf.WriteString("...")
+		} else {
+			if i > 0 {
+				outBuf.WriteString(" ")
+			}
+		}
+		outBuf.WriteString(line.line)
+	}
 	
-	return text
+	if selLines[len(selLines) - 1].idx != len(lines) - 1 {
+		outBuf.WriteString("...")
+	}
+	
+	return outBuf.String()
 }

@@ -20,7 +20,8 @@
                 </div>
                 <div class="summary">{{.Summary}}</div>
                 <div class="info">
-                    {{.MarkedPackage}}
+                    <a target="_blank" href="{{.ProjectURL}}">{{.MarkedPackage}}</a>
+                    - <a target="_blank" href="http://godoc.org/{{.Package}}">GoDoc</a>
                     - {{printf "%.2f" .Score}} ({{printf "%.2f" .MatchScore}}, {{printf "%.2f" .StaticScore}})
                 </div>
             </li>
