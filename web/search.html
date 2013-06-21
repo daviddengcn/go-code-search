@@ -8,7 +8,7 @@
 </div>
 <div class="content">
     <div>
-        Total {{.Results.TotalResults}} results:
+        Total {{.Results.TotalResults}} projects{{if .Results.Folded}} ({{.Results.Folded}} folded){{end}}:
     </div>
     <ol class="schres">
         {{range .Results.Docs}}
@@ -19,6 +19,15 @@
                     - {{.StarCount}} stars
                 </div>
                 <div class="summary">{{.Summary}}</div>
+                {{if .Subs }}
+                <div>sub:
+                    {{range .Subs}}
+                    <span>
+                        <a target="_blank" title="{{.Info}}" href="view?id={{.Package}}">{{.MarkedName}}({{.SubPath}})</a>
+                    </span>
+                    {{end}}
+                </div>
+                {{end}}
                 <div class="info">
                     <a target="_blank" href="{{.ProjectURL}}">{{.MarkedPackage}}</a>
                     - <a target="_blank" href="http://godoc.org/{{.Package}}">GoDoc</a>

@@ -28,7 +28,7 @@ func init() {
 
 	http.HandleFunc("/", pageRoot)
 	
-	http.HandleFunc("/try", pageTry)
+//	http.HandleFunc("/try", pageTry)
 }
 
 func pageRoot(w http.ResponseWriter, r *http.Request) {
@@ -39,15 +39,24 @@ func pageRoot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type SubProjectInfo struct {
+	MarkedName template.HTML
+	Package    string
+	SubPath    string
+	Info       string
+}
+
 type ShowDocInfo struct {
 	DocInfo
-	Summary      template.HTML
+	Summary       template.HTML
 	MarkedName    template.HTML
 	MarkedPackage template.HTML
+	Subs          []SubProjectInfo
 }
 
 type ShowResults struct {
 	TotalResults int
+	Folded       int
 	Docs         []ShowDocInfo
 }
 
@@ -56,24 +65,50 @@ func markWord(word string) template.HTML {
 }
 
 func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults {
-	docs := make([]ShowDocInfo, len(results.Docs))
+	docs := make([]ShowDocInfo, 0, len(results.Docs))
+	
+	projToIdx := make(map[string]int)
+	folded := 0
 
-	for i, d := range results.Docs {
+	mainLoop:
+	for _, d := range results.Docs {
 		if d.Name == "main" {
 			d.Name = "main - " + projectOfPackage(d.Package)
 		}
 		
-		raw := selectSnippets(d.Description, tokens, 300)
-
-		docs[i] = ShowDocInfo{
-			DocInfo:      d,
-			MarkedName:    markText(d.Name, tokens, markWord),
-			Summary:      markText(raw, tokens, markWord),
-			MarkedPackage: markText(d.Package, tokens, markWord),
+		markedName := markText(d.Name, tokens, markWord)
+		
+		parts := strings.Split(d.Package, "/")
+		if len(parts) > 2 {
+			for i := len(parts) - 1; i >= 2; i-- {
+				pkg := strings.Join(parts[:i], "/")
+				if idx, ok := projToIdx[pkg]; ok {
+					docs[idx].Subs = append(docs[idx].Subs, SubProjectInfo{
+						MarkedName: markedName,
+						Package:    d.Package,
+						SubPath:    "/" + strings.Join(parts[i:], "/"),
+						Info:       d.Synopsis,
+					})
+					folded ++
+					continue mainLoop
+				}
+			}
 		}
+		
+		raw := selectSnippets(d.Description + "\n" + d.ReadmeData, tokens, 300)
+
+		projToIdx[d.Package] = len(docs)
+		docs = append(docs, ShowDocInfo{
+			DocInfo:       d,
+			MarkedName:    markedName,
+			Summary:       markText(raw, tokens, markWord),
+			MarkedPackage: markText(d.Package, tokens, markWord),
+		})
 	}
+	
 	return &ShowResults{
 		TotalResults: results.TotalResults,
+		Folded:       folded,
 		Docs:         docs,
 	}
 }

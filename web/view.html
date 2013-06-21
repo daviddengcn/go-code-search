@@ -3,9 +3,11 @@
 <div class="code">
     import "{{.Package}}"
 </div>
-<pre>
+<pre>{{if .Description}}
 {{.Description}}
-</pre>
+{{else}}{{if .ReadmeData}}({{.ReadmeFn}})
+{{.ReadmeData}}
+{{end}}{{end}}</pre>
 <div>Imported by {{len .ImportedPkgs}} package(s):</div>
     <ol class="schres">
         {{range .ImportedPkgs}}

@@ -80,11 +80,12 @@ type DocInfo struct {
 	StarCount    int
 	Synopsis     string   `datastore:",noindex"`
 	Description  string   `datastore:",noindex"`
-	Readme       string   `datastore:",noindex"`
 	ImportedPkgs []string `datastore:",noindex"`
 	StaticScore  float64  `datastore:",noindex"`
 	Imports      []string `datastore:",noindex"`
 	ProjectURL   string   `datastore:",noindex"`
+	ReadmeFn     string   `datastore:",noindex"`
+	ReadmeData   string   `datastore:",noindex"`
 	
 	MatchScore  float64  `datastore:"-"`
 	Score       float64  `datastore:"-"`
@@ -197,11 +198,11 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 }
 
 func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
-	if len(tokens) == 0 {
-		return 1.
-	}
+	s := float64(0.02*float64(len(tokens)))
 	
-	s := float64(len(tokens))
+	if len(tokens) == 0 {
+		return s
+	}
 	
 	synopsis := strings.ToLower(doc.Synopsis)
 	name := strings.ToLower(doc.Name)
@@ -209,11 +210,11 @@ func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
 	
 	for token := range tokens {
 		if strings.Index(synopsis, token) >= 0 {
-			s += 0.1
+			s += 0.25
 		}
 		
 		if strings.Index(name, token) >= 0 {
-			s += 0.5
+			s += 0.4
 		}
 		
 		if strings.Index(pkg, token) >= 0 {
@@ -255,12 +256,20 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	}
 
 	villa.SortF(len(docs), func(i, j int) bool {
-		// Less
+		// true if doc i is before doc j
 		ssi, ssj := docs[i].Score, docs[j].Score
 		if ssi > ssj {
 			return true
 		}
 		if ssi < ssj {
+			return false
+		}
+		
+		sci, scj := docs[i].StarCount, docs[j].StarCount
+		if sci > scj {
+			return true
+		}
+		if sci < scj {
 			return false
 		}
 
@@ -290,7 +299,7 @@ func index(c appengine.Context, doc DocInfo) error {
 	tokens = appendTokens(tokens, doc.Name)
 	tokens = appendTokens(tokens, doc.Package)
 	tokens = appendTokens(tokens, doc.Description)
-	tokens = appendTokens(tokens, doc.Readme)
+	tokens = appendTokens(tokens, doc.ReadmeData)
 	tokens = appendTokens(tokens, doc.Author)
 
 	id := doc.Package
@@ -362,6 +371,12 @@ func updateDocument(c appengine.Context, pdoc *doc.Package) {
 		// if pdoc.StarCount < 0, it is not correctly fetched, remain old value
 		d.StarCount = pdoc.StarCount
 	}
+	
+	d.ReadmeFn, d.ReadmeData = "", ""
+	for fn, data := range pdoc.ReadmeFiles {
+		d.ReadmeFn, d.ReadmeData = fn, string(data)
+	}
+//log.Printf("Readme of %s: %v", d.Package, pdoc.ReadmeFiles)
 
 	//log.Printf("[updateDocument] pdoc.References: %v", pdoc.References)
 

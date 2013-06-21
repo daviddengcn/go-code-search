@@ -13,5 +13,9 @@ handlers:
 - url: /js/
   static_dir: js
   
+- url: /robots.txt
+  static_files: static/robots.txt
+  upload: static/robots.txt
+
 - url: /.*
   script: _go_app
