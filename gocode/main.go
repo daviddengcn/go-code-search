@@ -239,6 +239,6 @@ func pageClear(w http.ResponseWriter, r *http.Request) {
 }
 
 func pageTry(w http.ResponseWriter, r *http.Request) {
-	tokens := appendTokens(nil, "justTellsMeWhy efg1234.43 中文字符")
+	tokens := appendTokens(nil, "justTellsMeWhy goes going lied lie lies chicks efg1234.43 中文字符")
 	fmt.Fprintf(w, "Tokens: %v", tokens.Elements())
 }

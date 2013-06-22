@@ -4,6 +4,7 @@ import (
 	"appengine"
 	"bytes"
 	"github.com/daviddengcn/gddo/doc"
+    "github.com/agonopol/go-stem/stemmer"
 	"github.com/daviddengcn/go-villa"
 	"html/template"
 	"log"
@@ -178,7 +179,7 @@ func isTermSep(r rune) bool {
 }
 
 func normWord(word string) string {
-	return strings.ToLower(word)
+	return string(stemmer.Stem([]byte(word)))
 }
 
 func CheckRuneType(last, current rune) RuneType {
