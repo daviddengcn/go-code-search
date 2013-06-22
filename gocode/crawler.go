@@ -47,7 +47,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 var httpTransport = &transport{
 	t: http.Transport{
-		Dial: timeoutDial,
+//		Dial: timeoutDial,
 		ResponseHeaderTimeout: requestTimeout / 2,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
@@ -102,7 +102,7 @@ const (
 
 func appendPackage(c appengine.Context, pkg string) {
 	if !doc.IsValidRemotePath(pkg) {
-		log.Printf("  [appendPackage] Not a valid remote path: %s", pkg)
+		// log.Printf("  [appendPackage] Not a valid remote path: %s", pkg)
 		return
 	}
 	ddb := NewDocDB(c, "crawler")

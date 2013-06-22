@@ -32,7 +32,7 @@ func crawlingLooop(c appengine.Context) {
 					for _, pkg := range pkgs {
 						log.Printf("Crawling package %s ...", pkg)
 						crawlPackage(c, pkg)
-						time.Sleep(10 * time.Second)
+						time.Sleep(5 * time.Second)
 					}
 
 					wg.Done()
@@ -71,7 +71,7 @@ func crawlingLooop(c appengine.Context) {
 					for _, p := range persons {
 						log.Printf("Crawling person %s ...", p)
 						crawlPerson(c, p)
-						time.Sleep(10 * time.Second)
+						time.Sleep(5 * time.Second)
 					}
 
 					wg.Done()
