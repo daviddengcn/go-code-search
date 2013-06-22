@@ -181,11 +181,50 @@ func normWord(word string) string {
 	return strings.ToLower(word)
 }
 
+func CheckRuneType(last, current rune) RuneType {
+	if isTermSep(current) {
+		return TokenSep
+	}
+	
+	if current > 128 {
+		return TokenStart
+	}
+	
+	if unicode.IsLetter(current) {
+		if unicode.IsLetter(last) {
+			return TokenBody
+		}
+		return TokenStart
+	}
+	
+	if unicode.IsNumber(current) {
+		if unicode.IsNumber(last) {
+			return TokenBody
+		}
+		return TokenStart
+	}
+	
+	return TokenStart
+}
+
 func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
+	/*
 	for _, token := range strings.FieldsFunc(text, isTermSep) {
 		token = normWord(token)
 		tokens.Put(token)
 	}
+	*/
+	lastToken := ""
+	Tokenize(CheckRuneType, bytes.NewReader([]byte(text)), func(token string) {
+		token = normWord(token)
+		tokens.Put(token)
+		
+		if token[0] > 128 && len(lastToken) > 0 && lastToken[0] > 128 {
+			tokens.Put(lastToken + token)
+		}
+		
+		lastToken = token
+	})
 	/*
 		var s scanner.Scanner
 		s.Init(bytes.NewReader([]byte(text)))

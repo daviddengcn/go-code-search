@@ -239,6 +239,6 @@ func pageClear(w http.ResponseWriter, r *http.Request) {
 }
 
 func pageTry(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
-	crawlPerson(c, idOfPerson("bitbucket.org", "kardianos"))
+	tokens := appendTokens(nil, "abcd efg1234.43 中文字符")
+	fmt.Fprintf(w, "Tokens: %v", tokens.Elements())
 }
