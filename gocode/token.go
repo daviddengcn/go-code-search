@@ -9,7 +9,7 @@ type RuneType int
 const (
 	TokenSep RuneType = iota // token breaker, should ignored
 	TokenStart // start of a new token
-	TokenBody  // continue of the current token
+	TokenBody  // body of a token. It's ok for the first rune to be a TokenBody
 )
 
 /* 

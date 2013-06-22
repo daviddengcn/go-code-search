@@ -207,6 +207,34 @@ func CheckRuneType(last, current rune) RuneType {
 	return TokenStart
 }
 
+func isCamel(token string) bool {
+	upper, lower := false, false
+	for _, r := range token {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+		
+		if unicode.IsUpper(r) {
+			upper = true
+			if lower {
+				break
+			}
+		} else {
+			lower = true
+		}
+	}
+	
+	return upper && lower
+}
+
+func CheckCamel(last, current rune) RuneType {
+	if unicode.IsUpper(current) {
+		return TokenStart
+	}
+	
+	return TokenBody
+}
+
 func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	/*
 	for _, token := range strings.FieldsFunc(text, isTermSep) {
@@ -216,6 +244,19 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	*/
 	lastToken := ""
 	Tokenize(CheckRuneType, bytes.NewReader([]byte(text)), func(token string) {
+		if isCamel(token) {
+			last := ""
+			Tokenize(CheckCamel, bytes.NewReader([]byte(token)), func(token string) {
+				token = normWord(token)
+				tokens.Put(token)
+				
+				if last != "" {
+					tokens.Put(last + "-" + token)
+				}
+				
+				last = token
+			})
+		}
 		token = normWord(token)
 		tokens.Put(token)
 		
