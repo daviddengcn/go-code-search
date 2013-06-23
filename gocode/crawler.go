@@ -496,3 +496,13 @@ func listCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
 	
 	return pkgs
 }
+
+func reportBadPackage(c appengine.Context, pkg string) {
+	err := datastore.Delete(c, datastore.NewKey(c, crawlerPackageKind, pkg, 0, nil))
+	if err != nil {
+		c.Errorf("Delete package %s in %s failed: %v", pkg, crawlerPackageKind, err)
+		return
+	}
+	
+	c.Infof("Package entry %s in %s removed", pkg, crawlerPackageKind)
+}

@@ -33,6 +33,7 @@ func init() {
 	http.HandleFunc("/crawlentries", pageCrawlEntries)
 	http.HandleFunc("/pushpkg", pagePushPkg)
 	http.HandleFunc("/pushpsn", pagePushPerson)
+	http.HandleFunc("/reportbadpkg", pageReportBadPackage)
 
 	// http//.HandleFunc("/clear", pageClear)
 
@@ -283,8 +284,8 @@ func pageCrawlEntries(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	l, _ := strconv.Atoi(r.FormValue("l"))
 	kind := strings.TrimSpace(r.FormValue("kind"))
-	pkgs := listCrawlEntries(c, kind, l)
-	pkgsJsonBs, err := json.Marshal(pkgs)
+	entries := listCrawlEntries(c, kind, l)
+	pkgsJsonBs, err := json.Marshal(entries)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -322,4 +323,10 @@ func pagePushPerson(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	w.Write(jsonBytes)
+}
+
+func pageReportBadPackage(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	pkg := gcc.ParseReportBadPackage(r)
+	reportBadPackage(c, pkg)
 }
