@@ -3,9 +3,10 @@ package gocode
 import (
 	"appengine"
 	"bytes"
+	"github.com/agonopol/go-stem/stemmer"
 	"github.com/daviddengcn/gddo/doc"
-    "github.com/agonopol/go-stem/stemmer"
 	"github.com/daviddengcn/go-villa"
+	"github.com/daviddengcn/go-code-crawl"
 	"html/template"
 	"log"
 	"math"
@@ -186,25 +187,25 @@ func CheckRuneType(last, current rune) RuneType {
 	if isTermSep(current) {
 		return TokenSep
 	}
-	
+
 	if current > 128 {
 		return TokenStart
 	}
-	
+
 	if unicode.IsLetter(current) {
 		if unicode.IsLetter(last) {
 			return TokenBody
 		}
 		return TokenStart
 	}
-	
+
 	if unicode.IsNumber(current) {
 		if unicode.IsNumber(last) {
 			return TokenBody
 		}
 		return TokenStart
 	}
-	
+
 	return TokenStart
 }
 
@@ -214,7 +215,7 @@ func isCamel(token string) bool {
 		if !unicode.IsLetter(r) {
 			return false
 		}
-		
+
 		if unicode.IsUpper(r) {
 			upper = true
 			if lower {
@@ -224,7 +225,7 @@ func isCamel(token string) bool {
 			lower = true
 		}
 	}
-	
+
 	return upper && lower
 }
 
@@ -232,16 +233,16 @@ func CheckCamel(last, current rune) RuneType {
 	if unicode.IsUpper(current) {
 		return TokenStart
 	}
-	
+
 	return TokenBody
 }
 
 func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	/*
-	for _, token := range strings.FieldsFunc(text, isTermSep) {
-		token = normWord(token)
-		tokens.Put(token)
-	}
+		for _, token := range strings.FieldsFunc(text, isTermSep) {
+			token = normWord(token)
+			tokens.Put(token)
+		}
 	*/
 	lastToken := ""
 	Tokenize(CheckRuneType, bytes.NewReader([]byte(text)), func(token string) {
@@ -250,21 +251,21 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 			Tokenize(CheckCamel, bytes.NewReader([]byte(token)), func(token string) {
 				token = normWord(token)
 				tokens.Put(token)
-				
+
 				if last != "" {
 					tokens.Put(last + "-" + token)
 				}
-				
+
 				last = token
 			})
 		}
 		token = normWord(token)
 		tokens.Put(token)
-		
+
 		if token[0] > 128 && len(lastToken) > 0 && lastToken[0] > 128 {
 			tokens.Put(lastToken + token)
 		}
-		
+
 		lastToken = token
 	})
 	/*
@@ -433,7 +434,7 @@ func updateImported(c appengine.Context, pkg string) {
 	}
 }
 
-func updateDocument(c appengine.Context, pdoc *doc.Package) {
+func updateDocument(c appengine.Context, pdoc *gcc.Package) {
 	var d DocInfo
 
 	ddb := NewDocDB(c, "doc")
@@ -453,10 +454,11 @@ func updateDocument(c appengine.Context, pdoc *doc.Package) {
 		d.StarCount = pdoc.StarCount
 	}
 
-	d.ReadmeFn, d.ReadmeData = "", ""
-	for fn, data := range pdoc.ReadmeFiles {
-		d.ReadmeFn, d.ReadmeData = fn, string(data)
-	}
+	d.ReadmeFn, d.ReadmeData = pdoc.ReadmeFn, pdoc.ReadmeData
+	
+//	for fn, data := range pdoc.ReadmeFiles {
+//		d.ReadmeFn, d.ReadmeData = fn, string(data)
+//	}
 	//log.Printf("Readme of %s: %v", d.Package, pdoc.ReadmeFiles)
 
 	//log.Printf("[updateDocument] pdoc.References: %v", pdoc.References)

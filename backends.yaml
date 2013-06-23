@@ -1,3 +1,4 @@
 backends:
-- name: crawler
-  instances: 1
+#- name: crawler
+#  instances: 1
+#  class: B1

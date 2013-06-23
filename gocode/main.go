@@ -4,10 +4,14 @@ import (
 	"appengine"
 	"fmt"
 	"github.com/daviddengcn/go-villa"
+	"github.com/daviddengcn/go-code-crawl"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
+	"time"
+	"encoding/json"
+	"strconv"
 )
 
 var templates = template.Must(template.ParseFiles("web/header.html",
@@ -23,8 +27,14 @@ func init() {
 	http.HandleFunc("/update", pageUpdate)
 	http.HandleFunc("/crawl", pageCrawl)
 	http.HandleFunc("/crawler", pageCrawler)
+	http.HandleFunc("/crawlloop", pageCrawlLoop)
+	http.HandleFunc("/check", pageCheck)
+	
+	http.HandleFunc("/crawlentries", pageCrawlEntries)
+	http.HandleFunc("/pushpkg", pagePushPkg)
+	http.HandleFunc("/pushpsn", pagePushPerson)
 
-	//	http.HandleFunc("/clear", pageClear)
+	// http//.HandleFunc("/clear", pageClear)
 
 	http.HandleFunc("/", pageRoot)
 
@@ -142,7 +152,9 @@ func pageAdd(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%d packaged submitted!", len(pkgs))
 		for _, pkg := range pkgs {
 			pkg = strings.TrimSpace(pkg)
-			appendPackage(c, pkg)
+			if appendPackage(c, pkg) {
+//				addCheckTask(c, "package", pkg)
+			}
 		}
 	}
 	err := templates.ExecuteTemplate(w, "add.html", nil)
@@ -166,7 +178,7 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 		if !exists {
 			fmt.Fprintf(w, `<html><body>No such entry!`)
 
-			ent, _ := findCrawlPackage(c, id)
+			ent, _ := findCrawlingEntry(c, crawlerPackageKind, id)
 			if ent != nil {
 				fmt.Fprintf(w, ` Scheduled to be crawled at %s`,
 					ent.ScheduleTime.Format("2006-01-02 15:04:05"))
@@ -203,7 +215,12 @@ func pageCrawl(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("id")
 	if id != "" {
 		c := appengine.NewContext(r)
-		crawlPackage(c, id)
+		httpClient := genHttpClient(c)
+		
+		err := crawlPackage(c, httpClient, id)
+		if err != nil {
+	        http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	http.Redirect(w, r, "view?id="+template.URLQueryEscaper(id), 301)
@@ -241,4 +258,68 @@ func pageClear(w http.ResponseWriter, r *http.Request) {
 func pageTry(w http.ResponseWriter, r *http.Request) {
 	tokens := appendTokens(nil, "justTellsMeWhy goes going lied lie lies chicks efg1234.43 中文字符")
 	fmt.Fprintf(w, "Tokens: %v", tokens.Elements())
+}
+
+func pageCrawlLoop(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+//	doCrawlingLoop(c, 1 * time.Minute)
+	doCrawlingLoop(c, 10 * time.Second)
+}
+
+func pageCheck(w http.ResponseWriter, r *http.Request) {
+	tp := strings.TrimSpace(r.FormValue("tp"))
+	id := strings.TrimSpace(r.FormValue("id"))
+	c := appengine.NewContext(r)
+	switch tp {
+	case "package":
+		checkPackage(c, id)
+	case "person":
+		c := appengine.NewContext(r)
+		checkPerson(c, id)
+	}
+}
+
+func pageCrawlEntries(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	l, _ := strconv.Atoi(r.FormValue("l"))
+	kind := strings.TrimSpace(r.FormValue("kind"))
+	pkgs := listCrawlEntries(c, kind, l)
+	pkgsJsonBs, err := json.Marshal(pkgs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	w.Write(pkgsJsonBs)
+}
+
+func pagePushPkg(w http.ResponseWriter, r *http.Request) {
+	p, err := gcc.ParsePushPackage(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	c := appengine.NewContext(r)
+	
+	pushPackage(c, p)
+}
+
+func pagePushPerson(w http.ResponseWriter, r *http.Request) {
+	p, err := gcc.ParsePushPerson(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	c := appengine.NewContext(r)
+	var reply gcc.PushPersonReply
+	reply.NewPackage = pushPerson(c, p)
+	
+	jsonBytes, err := json.Marshal(reply)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	w.Write(jsonBytes)
 }

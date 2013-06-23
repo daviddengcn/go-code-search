@@ -17,6 +17,14 @@ div.content {
     text-align: left;
 }
 
+ol.schres li {
+    margin-bottom: 10px;
+}
+
+ol.schres div.title a {
+    font-size: medium;
+}
+
 textarea#pkg {
     width: 800px;
     height: 500px;
