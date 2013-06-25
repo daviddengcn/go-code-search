@@ -9,14 +9,14 @@
 {{.ReadmeData}}
 {{end}}{{end}}</pre>
 <div>Imported by {{len .ImportedPkgs}} package(s):</div>
-    <ol class="schres">
+    <ol>
         {{range .ImportedPkgs}}
             <li><a target="_blank" href="view?id={{.}}">{{.}}</a></li>
         {{end}}
     </ol>
 <div>
 <div>Imports {{len .Imports}} package(s):</div>
-    <ol class="schres">
+    <ol>
         {{range .Imports}}
             <li><a target="_blank" href="view?id={{.}}">{{.}}</a></li>
         {{end}}
