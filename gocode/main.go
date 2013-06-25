@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"github.com/daviddengcn/go-villa"
 	"github.com/daviddengcn/go-code-crawl"
+	"github.com/daviddengcn/go-rpc"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
 	"time"
-	"encoding/json"
-	"strconv"
 )
 
 var templates = template.Must(template.ParseFiles("web/header.html",
@@ -29,11 +28,8 @@ func init() {
 	http.HandleFunc("/crawler", pageCrawler)
 	http.HandleFunc("/crawlloop", pageCrawlLoop)
 	http.HandleFunc("/check", pageCheck)
-	
-	http.HandleFunc("/crawlentries", pageCrawlEntries)
-	http.HandleFunc("/pushpkg", pagePushPkg)
-	http.HandleFunc("/pushpsn", pagePushPerson)
-	http.HandleFunc("/reportbadpkg", pageReportBadPackage)
+
+	rpc.Register(new(CrawlerServer))
 
 	// http//.HandleFunc("/clear", pageClear)
 
@@ -280,53 +276,33 @@ func pageCheck(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func pageCrawlEntries(w http.ResponseWriter, r *http.Request) {
+type CrawlerServer struct {}
+
+func (cs *CrawlerServer) FetchPackageList(r *http.Request, l int) (pkgs []string) {
 	c := appengine.NewContext(r)
-	l, _ := strconv.Atoi(r.FormValue("l"))
-	kind := strings.TrimSpace(r.FormValue("kind"))
-	entries := listCrawlEntries(c, kind, l)
-	pkgsJsonBs, err := json.Marshal(entries)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	
-	w.Write(pkgsJsonBs)
+	return listCrawlEntries(c, crawlerPackageKind, l)
 }
 
-func pagePushPkg(w http.ResponseWriter, r *http.Request) {
-	p, err := gcc.ParsePushPackage(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+func (cs *CrawlerServer) FetchPersonList(r *http.Request, l int) (ids []string) {
 	c := appengine.NewContext(r)
-	
+	return listCrawlEntries(c, crawlerPersonKind, l)
+}
+
+func (cs *CrawlerServer) PushPackage(r *http.Request, p *gcc.Package) {
+	c := appengine.NewContext(r)
 	pushPackage(c, p)
 }
 
-func pagePushPerson(w http.ResponseWriter, r *http.Request) {
-	p, err := gcc.ParsePushPerson(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	
+func (cs *CrawlerServer) ReportBadPackage(r *http.Request, pkg string) {
 	c := appengine.NewContext(r)
-	var reply gcc.PushPersonReply
-	reply.NewPackage = pushPerson(c, p)
-	
-	jsonBytes, err := json.Marshal(reply)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	
-	w.Write(jsonBytes)
+	reportBadPackage(c, pkg)
 }
 
-func pageReportBadPackage(w http.ResponseWriter, r *http.Request) {
+func (cs *CrawlerServer) PushPerson(r *http.Request, p *gcc.Person) (NewPackage bool) {
 	c := appengine.NewContext(r)
-	pkg := gcc.ParseReportBadPackage(r)
-	reportBadPackage(c, pkg)
+	return pushPerson(c, p)
+}
+
+func (cs *CrawlerServer) LastError() error {
+	return nil
 }

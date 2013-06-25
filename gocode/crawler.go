@@ -22,7 +22,7 @@ import (
 func init() {
 	doc.SetGithubCredentials("94446b37edb575accd8b",
 		"15f55815f0515a3f6ad057aaffa9ea83dceb220b")
-	doc.SetUserAgent("Go-Code-Search-Agent")
+	doc.SetUserAgent("Go-Code-Search-Engine")
 }
 
 const crawlerTimeout = 20 * time.Second
@@ -228,13 +228,14 @@ func groupToFetch(c appengine.Context) (groups map[string][]string) {
 
 /* Crawl a package. */
 func crawlPackage(c appengine.Context, httpClient *http.Client, pkg string) error {
-	pdoc, err := doc.Get(httpClient, pkg, "")
+	pdoc, err := gcc.CrawlPackage(httpClient, pkg)
+	//pdoc, err := doc.Get(httpClient, pkg, "")
 	if err != nil {
 		c.Errorf("[crawlPackage] doc.Get() failed: %v", err)
 	} else {
 		c.Infof("[crawlPackage] doc.Get(%s) sucess", pkg)
 
-		// updateDocument(c, pdoc)
+		updateDocument(c, pdoc)
 
 		for _, imp := range pdoc.Imports {
 			appendPackage(c, imp)
