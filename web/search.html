@@ -8,7 +8,7 @@
 </div>
 <div class="content">
     <div>
-        Total {{.Results.TotalResults}} projects{{if .Results.Folded}} ({{.Results.Folded}} folded){{end}}:
+        Total {{.Results.TotalResults}} projects{{if .Results.Folded}} ({{.Results.Folded}} folded){{end}}, {{.SearchTime}}
     </div>
     <ol class="schres">
         {{range .Results.Docs}}

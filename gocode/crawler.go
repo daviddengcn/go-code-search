@@ -3,20 +3,13 @@ package gocode
 import (
 	"appengine"
 	"appengine/datastore"
-	"appengine/urlfetch"
 	"github.com/daviddengcn/gddo/doc"
 	"github.com/daviddengcn/go-code-crawl"
 	"log"
 	"math/rand"
-	//	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
-	
-//	"crypto/tls"
-
-	"fmt"
 )
 
 func init() {
@@ -25,32 +18,10 @@ func init() {
 	doc.SetUserAgent("Go-Code-Search-Engine")
 }
 
-const crawlerTimeout = 20 * time.Second
-
 const (
 	DefaultPackageAge = 10 * 24 * time.Hour
 	DefaultPersonAge  = 10 * 24 * time.Hour
 )
-
-func genHttpClient(c appengine.Context) *http.Client {
-	return &http.Client{
-		Transport: &urlfetch.Transport{
-			Context:                       c,
-			Deadline:                      crawlerTimeout,
-			AllowInvalidServerCertificate: true,
-		},
-	}
-	/*
-	return &http.Client {
-		Transport: &http.Transport {
-			TLSClientConfig: &tls.Config {
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-	*/
-	/* return urlfetch.Client(c)*/
-}
 
 const (
 	crawlerPackageKind = "crawler"
@@ -68,16 +39,12 @@ func urlOfPackage(pkg string) *url.URL {
 }
 
 func schedulePackage(c appengine.Context, pkg string, sTime time.Time) error {
+	ddb := NewCachedDocDB(c, crawlerPackageKind)
+	
 	var ent CrawlingEntry
-
-	key := datastore.NewKey(c, crawlerPackageKind, pkg, 0, nil)
-
-	// fetch old value, if any
-	err := datastore.Get(c, key, &ent)
-	if !DocGetOk(err) {
-		if err != datastore.ErrNoSuchEntity {
-			log.Printf("[scheduledPackage] Get(crawler, %s) failed: %v", pkg, err)
-		}
+	err, _ := ddb.Get(pkg, &ent)
+	if err != nil {
+		log.Printf("[scheduledPackage] Get(crawler, %s) failed: %v", pkg, err)
 	}
 
 	ent.ScheduleTime = sTime
@@ -87,13 +54,13 @@ func schedulePackage(c appengine.Context, pkg string, sTime time.Time) error {
 		ent.Host = u.Host
 	}
 
-	_, err = datastore.Put(c, key, &ent)
+	err = ddb.Put(pkg, &ent)
 	if err != nil {
 		log.Printf("datastore.Put failed: %v", err)
 		return err
 	}
 
-	log.Printf("Schedule package %s to %v", pkg, sTime)
+	c.Infof("Schedule package %s to %v", pkg, sTime)
 	return nil
 }
 
@@ -103,7 +70,7 @@ func appendPackage(c appengine.Context, pkg string) bool {
 		// log.Printf("  [appendPackage] Not a valid remote path: %s", pkg)
 		return false
 	}
-	ddb := NewDocDB(c, crawlerPackageKind)
+	ddb := NewCachedDocDB(c, crawlerPackageKind)
 
 	var ent CrawlingEntry
 	err, exists := ddb.Get(pkg, &ent)
@@ -121,25 +88,14 @@ func appendPackage(c appengine.Context, pkg string) bool {
 	return schedulePackage(c, pkg, time.Now()) == nil
 }
 
-func idOfPerson(site, username string) string {
-	return fmt.Sprintf("%s:%s", site, username)
-}
-
-func parsePersonId(id string) (site, username string) {
-	parts := strings.Split(id, ":")
-	return parts[0], parts[1]
-}
-
 func schedulePerson(c appengine.Context, site, username string, sTime time.Time) error {
+	ddb := NewCachedDocDB(c, crawlerPersonKind)
+	
 	var ent CrawlingEntry
 
-	id := idOfPerson(site, username)
-
-	key := datastore.NewKey(c, crawlerPersonKind, id, 0, nil)
-
-	// fetch old value, if any
-	err := datastore.Get(c, key, &ent)
-	if !DocGetOk(err) {
+	id := gcc.IdOfPerson(site, username)
+	err, _ := ddb.Get(id, &ent)
+	if err != nil {
 		log.Printf("  [scheduledPerson] crawler-person.Get(%s) failed: %v", id,
 			err)
 	}
@@ -147,21 +103,21 @@ func schedulePerson(c appengine.Context, site, username string, sTime time.Time)
 	ent.ScheduleTime = sTime
 	ent.Host = site
 
-	_, err = datastore.Put(c, key, &ent)
+	err = ddb.Put(id, &ent)
 	if err != nil {
-		log.Printf("  [scheduledPerson] crawler-person.Put(%s) failed: %v", id,
+		c.Errorf("  [scheduledPerson] crawler-person.Put(%s) failed: %v", id,
 			err)
 		return err
 	}
 
-	log.Printf("Schedule person %s to %v", id, sTime)
+	c.Infof("Schedule person %s to %v", id, sTime)
 	return nil
 }
 
 func appendPerson(c appengine.Context, site, username string) bool {
-	ddb := NewDocDB(c, crawlerPersonKind)
+	ddb := NewCachedDocDB(c, crawlerPersonKind)
 
-	id := idOfPerson(site, username)
+	id := gcc.IdOfPerson(site, username)
 
 	var ent CrawlingEntry
 	err, exists := ddb.Get(id, &ent)
@@ -179,82 +135,9 @@ func appendPerson(c appengine.Context, site, username string) bool {
 	return schedulePerson(c, site, username, time.Now()) == nil
 }
 
-func groupToFetch(c appengine.Context) (groups map[string][]string) {
-	pkgCount := 0
-	oldest := time.Now()
-	var oldestPkg string
-
-	groups = make(map[string][]string)
-	q := datastore.NewQuery(crawlerPackageKind).Filter("ScheduleTime<", time.Now()).Order("ScheduleTime")
-
-	t := q.Run(c)
-	for {
-		var ent CrawlingEntry
-		key, err := t.Next(&ent)
-		if err == datastore.Done {
-			break
-		}
-
-		if err != nil {
-			if !DocGetOk(err) {
-				log.Printf("[groupToFetch] t.Next failed: %#v", err)
-				break
-			}
-		}
-
-		pkg := key.StringID()
-		host := ent.Host
-		if host == "" {
-			u := urlOfPackage(pkg)
-
-			if u != nil {
-				host = u.Host
-			}
-		}
-
-		groups[host] = append(groups[host], pkg)
-
-		if ent.ScheduleTime.Before(oldest) {
-			oldest = ent.ScheduleTime
-			oldestPkg = pkg
-		}
-		pkgCount++
-	}
-
-	c.Infof("[groupToFetch] got %d groups, %d packages, oldest %v(%v): %v", len(groups), pkgCount, oldest, time.Now().Sub(oldest), oldestPkg)
-
-	return groups
-}
-
-/* Crawl a package. */
-func crawlPackage(c appengine.Context, httpClient *http.Client, pkg string) error {
-	pdoc, err := gcc.CrawlPackage(httpClient, pkg)
-	//pdoc, err := doc.Get(httpClient, pkg, "")
-	if err != nil {
-		c.Errorf("[crawlPackage] doc.Get() failed: %v", err)
-	} else {
-		c.Infof("[crawlPackage] doc.Get(%s) sucess", pkg)
-
-		updateDocument(c, pdoc)
-
-		for _, imp := range pdoc.Imports {
-			appendPackage(c, imp)
-		}
-		log.Printf("[crawlPackage] References: %v", pdoc.References)
-		for _, ref := range pdoc.References {
-			appendPackage(c, ref)
-		}
-	}
-	schedulePackage(c, pkg, time.Now().Add(DefaultPackageAge).Add(
-		time.Duration(rand.Int63n(int64(DefaultPackageAge)/10)-
-			int64(DefaultPackageAge)/5)))
-			
-	return err
-}
-
-func pushPackage(c appengine.Context, doc *gcc.Package) { 
+func pushPackage(c appengine.Context, doc *gcc.Package) {
 	updateDocument(c, doc)
-	
+
 	for _, imp := range doc.Imports {
 		appendPackage(c, imp)
 	}
@@ -337,93 +220,6 @@ func fetchCrawlerInfo(c appengine.Context) (info CrawlerInfo) {
 	return
 }
 
-/* Crawl a person's projects. */
-func crawlPerson(c appengine.Context, httpClient *http.Client, id string) (hasNewPkg bool) {
-	site, username := parsePersonId(id)
-	//log.Printf("Crawling person %s/%s", site, username)
-	switch site {
-	case "github.com":
-		p, err := doc.GetGithubPerson(httpClient, map[string]string{"owner": username})
-		if err != nil {
-			log.Printf("[crawlPerson] doc.GetGithubPerson(%s) failed: %v", username, err)
-		} else {
-			log.Printf("[crawlPerson] doc.GetGithubPerson(%s) sucess: %d projects", username, len(p.Projects))
-
-			for _, proj := range p.Projects {
-				if appendPackage(c, proj) {
-					hasNewPkg = true
-				}
-			}
-		}
-	case "bitbucket.org":
-		p, err := doc.GetBitbucketPerson(httpClient, map[string]string{"owner": username})
-		if err != nil {
-			log.Printf("[crawlPerson] doc.GetBitbucketPerson(%s) failed: %v", username, err)
-		} else {
-			log.Printf("[crawlPerson] doc.GetBitbucketPerson(%s) sucess: %d projects", username, len(p.Projects))
-
-			for _, proj := range p.Projects {
-				if appendPackage(c, proj) {
-					hasNewPkg = true
-				}
-			}
-		}
-	}
-	schedulePerson(c, site, username, time.Now().Add(DefaultPersonAge).Add(
-		time.Duration(rand.Int63n(int64(DefaultPersonAge)/10)-
-			int64(DefaultPersonAge)/5)))
-			
-	return
-}
-
-func groupToFetchPerson(c appengine.Context) (groups map[string][]string) {
-	pkgCount := 0
-	oldest := time.Now()
-	var oldestPkg string
-
-	groups = make(map[string][]string)
-	q := datastore.NewQuery(crawlerPersonKind).Filter("ScheduleTime<", time.Now()).Order("ScheduleTime")
-
-	t := q.Run(c)
-	for {
-		var ent CrawlingEntry
-		key, err := t.Next(&ent)
-		if err == datastore.Done {
-			break
-		}
-
-		if err != nil {
-			if !DocGetOk(err) {
-				log.Printf("[groupToFetchPerson] t.Next failed: %#v", err)
-				break
-			}
-		}
-
-		pkg := key.StringID()
-		host := ent.Host
-		if host == "" {
-			u := urlOfPackage(pkg)
-
-			if u != nil {
-				host = u.Host
-			}
-		}
-
-		groups[host] = append(groups[host], pkg)
-
-		if ent.ScheduleTime.Before(oldest) {
-			oldest = ent.ScheduleTime
-			oldestPkg = pkg
-		}
-		pkgCount++
-	}
-
-	c.Infof("[groupToFetchPerson] got %d groups, %d persons, oldest %v(%v): %v",
-		len(groups), pkgCount, oldest, time.Now().Sub(oldest), oldestPkg)
-
-	return groups
-}
-
 func findCrawlingEntry(c appengine.Context, kind string, id string) (*CrawlingEntry, error) {
 	ddb := NewDocDB(c, kind)
 
@@ -438,40 +234,6 @@ func findCrawlingEntry(c appengine.Context, kind string, id string) (*CrawlingEn
 	}
 
 	return nil, nil
-}
-
-// check the package, crawl if needed
-func checkPackage(c appengine.Context, pkg string) {
-	ent, err := findCrawlingEntry(c, crawlerPackageKind, pkg)
-	if ent == nil {
-		c.Errorf("Fail to find package %s: %v", pkg, err)
-		return
-	}
-	
-	if ent.ScheduleTime.After(time.Now()) {
-		c.Infof("Package %s was scheduled to %v", pkg, ent.ScheduleTime)
-		return
-	}
-	
-	httpClient := genHttpClient(c)
-	crawlPackage(c, httpClient, pkg)
-}
-
-// check the person, crawl if needed
-func checkPerson(c appengine.Context, id string) {
-	ent, err := findCrawlingEntry(c, crawlerPersonKind, id)
-	if ent == nil {
-		c.Errorf("Fail to find person %s: %v", id, err)
-		return
-	}
-	
-	if ent.ScheduleTime.After(time.Now()) {
-		c.Infof("Person %s was scheduled to %v", id, ent.ScheduleTime)
-		return
-	}
-	
-	httpClient := genHttpClient(c)
-	crawlPerson(c, httpClient, id)
 }
 
 func listCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
@@ -499,7 +261,8 @@ func listCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
 }
 
 func reportBadPackage(c appengine.Context, pkg string) {
-	err := datastore.Delete(c, datastore.NewKey(c, crawlerPackageKind, pkg, 0, nil))
+	ddb := NewCachedDocDB(c, crawlerPackageKind)
+	err := ddb.Delete(pkg)
 	if err != nil {
 		c.Errorf("Delete package %s in %s failed: %v", pkg, crawlerPackageKind, err)
 		return

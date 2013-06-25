@@ -3,6 +3,7 @@ package gocode
 import (
 	"appengine"
 	"appengine/datastore"
+	"appengine/memcache"
 	//"log"
 )
 
@@ -37,6 +38,10 @@ func (db *DocDB) Get(id string, doc interface{}) (err error, exists bool) {
 	return err, false
 }
 
+func (db *DocDB) Delete(id string) error {
+	return datastore.Delete(db.c, datastore.NewKey(db.c, db.kind, id, 0, nil))
+}
+
 func DocGetOk(err error) bool {
 	if err == nil {
 		return true
@@ -46,4 +51,46 @@ func DocGetOk(err error) bool {
 		return true
 	}
 	return false
+}
+
+type CachedDocDB DocDB
+
+func NewCachedDocDB(c appengine.Context, kind string) *CachedDocDB {
+	return (*CachedDocDB)(NewDocDB(c, kind))
+}
+
+func (db *CachedDocDB) Get(id string, doc interface{}) (err error, exists bool) {
+	mcID := "doc:" + db.kind + ":" + id
+	if _, err := memcache.Gob.Get(db.c, mcID, doc); err == nil {
+		// found in memcache
+		return nil, true
+	}
+	
+	err, exists = (*DocDB)(db).Get(id, doc)
+	if err != nil || !exists {
+		return err, exists
+	}
+	
+	memcache.Gob.Set(db.c, &memcache.Item{
+		Key: mcID,
+		Object: doc,
+	})
+	
+	return nil, true
+}
+
+func (db *CachedDocDB) Put(id string, doc interface{}) error {
+	mcID := "doc:" + db.kind + ":" + id
+	memcache.Gob.Set(db.c, &memcache.Item{
+		Key: mcID,
+		Object: doc,
+	})
+	
+	return (*DocDB)(db).Put(id, doc)
+}
+
+func (db *CachedDocDB) Delete(id string) error {
+	mcID := "doc:" + db.kind + ":" + id
+	memcache.Delete(db.c, mcID)
+	return (*DocDB)(db).Delete(id)
 }

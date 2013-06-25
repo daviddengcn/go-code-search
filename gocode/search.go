@@ -166,12 +166,12 @@ func (doc *DocInfo) updateStaticScore() {
 }
 
 func (doc *DocInfo) loadFromDB(c appengine.Context, id string) (err error, exists bool) {
-	ddb := NewDocDB(c, "doc")
+	ddb := NewCachedDocDB(c, "doc")
 	return ddb.Get(id, doc)
 }
 
 func (doc *DocInfo) saveToDB(c appengine.Context) error {
-	ddb := NewDocDB(c, "doc")
+	ddb := NewCachedDocDB(c, "doc")
 	return ddb.Put(doc.Package, doc)
 }
 
@@ -318,7 +318,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	}
 	log.Printf("  %d ids got for query %s", len(ids), q)
 
-	ddb := NewDocDB(c, "doc")
+	ddb := NewCachedDocDB(c, "doc")
 
 	docs := make([]DocInfo, len(ids))
 	for i, id := range ids {
@@ -392,7 +392,7 @@ func index(c appengine.Context, doc DocInfo) error {
 		return err
 	}
 
-	ddb := NewDocDB(c, "doc")
+	ddb := NewCachedDocDB(c, "doc")
 	err = ddb.Put(id, &doc)
 	if err != nil {
 		return err
@@ -437,7 +437,7 @@ func updateImported(c appengine.Context, pkg string) {
 func updateDocument(c appengine.Context, pdoc *gcc.Package) {
 	var d DocInfo
 
-	ddb := NewDocDB(c, "doc")
+	ddb := NewCachedDocDB(c, "doc")
 
 	// Set initial values. Error is ignored
 	ddb.Get(pdoc.ImportPath, &d)
@@ -482,20 +482,23 @@ func updateDocument(c appengine.Context, pdoc *gcc.Package) {
 	if err != nil {
 		log.Printf("Indexing %s failed: %v", d.Package, err)
 	}
+	c.Infof("Indexing %s success", d.Package)
 
 	// index importing links
 	ts = NewTokenSet(c, "import:")
 	imports := villa.NewStrSet(d.Imports...)
 	id := d.Package
-	log.Printf("  indexing imports of %s: %d", id, len(imports))
+	c.Infof("  indexing imports of %s: %d", id, len(imports))
 	err = ts.Index("import", id, imports)
 	if err != nil {
 		log.Printf("Indexing imports of %s failed: %v", d.Package, err)
 	}
+/*	
 	// update imported packages
 	for _, imp := range d.Imports {
 		updateImported(c, imp)
 	}
+*/
 
 	if strings.HasPrefix(d.Package, "github.com/") {
 		appendPerson(c, "github.com", d.Author)
