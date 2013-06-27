@@ -4,6 +4,7 @@ import (
 	"appengine"
 	"appengine/datastore"
 	"appengine/memcache"
+	"fmt"
 	//"log"
 )
 
@@ -25,6 +26,68 @@ func (db *DocDB) Put(id string, doc interface{}) error {
 	return err
 }
 
+
+type ErrorSlice []error
+
+func (es ErrorSlice) ErrorCount() (cnt int) {
+	for _, e := range es {
+		if e != nil {
+			cnt ++
+		}
+	}
+	
+	return cnt
+}
+
+func (es ErrorSlice) Error() string {
+	return fmt.Sprint([]error(es))
+}
+
+func ErrorSliceFromError(err error, Len int) ErrorSlice {
+	if err == nil {
+		return make(ErrorSlice, Len)
+	}
+	
+	if me, ok := err.(appengine.MultiError); ok {
+		return ErrorSlice(me)
+	}
+	
+	errs := make(ErrorSlice, Len)
+	for i := range errs {
+		errs[i] = err
+	}
+	return errs
+}
+
+func (db *DocDB) PutMulti(ids []string, docs interface{}) ErrorSlice {
+	if len(ids) == 0 {
+		return nil
+	}
+	
+	keys := make([]*datastore.Key, len(ids))
+	for i, id := range ids {
+		keys[i] = datastore.NewKey(db.c, db.kind, id, 0, nil)
+	}
+	_, err := datastore.PutMulti(db.c, keys, docs)
+	
+	return ErrorSliceFromError(err, len(ids))
+}
+
+func (db *DocDB) GetMulti(ids []string, docs interface{}) ErrorSlice {
+	if len(ids) == 0 {
+		return nil
+	}
+	
+	keys := make([]*datastore.Key, len(ids))
+	for i, id := range ids {
+		keys[i] = datastore.NewKey(db.c, db.kind, id, 0, nil)
+	}
+	
+	err := datastore.GetMulti(db.c, keys, docs)
+	return ErrorSliceFromError(err, len(ids))
+}
+
+// err is non-nil only if mistakes other than ErrNoSucheEntity and ErrFieldMismatch
 func (db *DocDB) Get(id string, doc interface{}) (err error, exists bool) {
 	err = datastore.Get(db.c, datastore.NewKey(db.c, db.kind, id, 0, nil), doc)
 	if err == datastore.ErrNoSuchEntity {
@@ -59,8 +122,9 @@ func NewCachedDocDB(c appengine.Context, kind string) *CachedDocDB {
 	return (*CachedDocDB)(NewDocDB(c, kind))
 }
 
+// err is non-nil only if mistakes other than ErrNoSucheEntity and ErrFieldMismatch
 func (db *CachedDocDB) Get(id string, doc interface{}) (err error, exists bool) {
-	mcID := "doc:" + db.kind + ":" + id
+	mcID := prefixCachedDocDB + db.kind + ":" + id
 	if _, err := memcache.Gob.Get(db.c, mcID, doc); err == nil {
 		// found in memcache
 		return nil, true
@@ -80,7 +144,7 @@ func (db *CachedDocDB) Get(id string, doc interface{}) (err error, exists bool) 
 }
 
 func (db *CachedDocDB) Put(id string, doc interface{}) error {
-	mcID := "doc:" + db.kind + ":" + id
+	mcID := prefixCachedDocDB + db.kind + ":" + id
 	memcache.Gob.Set(db.c, &memcache.Item{
 		Key:    mcID,
 		Object: doc,
@@ -90,7 +154,7 @@ func (db *CachedDocDB) Put(id string, doc interface{}) error {
 }
 
 func (db *CachedDocDB) Delete(id string) error {
-	mcID := "doc:" + db.kind + ":" + id
+	mcID := prefixCachedDocDB + db.kind + ":" + id
 	memcache.Delete(db.c, mcID)
 	return (*DocDB)(db).Delete(id)
 }
@@ -111,7 +175,7 @@ func NewCachedComputing(c appengine.Context, kind string, compF func(appengine.C
 }
 
 func (cc *CachedComputing) Get(id string, v interface{}) error {
-	mcID := "cc:" + cc.kind + ":" + id
+	mcID := prefixCachedComputing + cc.kind + ":" + id
 	if _, err := memcache.Gob.Get(cc.c, mcID, v); err == nil {
 		return nil
 	}
@@ -136,6 +200,6 @@ func (cc *CachedComputing) Invalidate(id string) error {
 }
 
 func CachedComputingInvalidate(c appengine.Context, kind, id string) error {
-	mcID := "cc:" + kind + ":" + id
+	mcID := prefixCachedComputing + kind + ":" + id
 	return memcache.Delete(c, mcID)
 }

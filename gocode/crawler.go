@@ -3,6 +3,7 @@ package gocode
 import (
 	"appengine"
 	"appengine/datastore"
+	"appengine/memcache"
 	"errors"
 	"github.com/daviddengcn/gddo/doc"
 	"github.com/daviddengcn/go-code-crawl"
@@ -25,11 +26,6 @@ const (
 	DefaultPersonAge  = 10 * 24 * time.Hour
 )
 
-const (
-	crawlerPackageKind = "crawler"
-	crawlerPersonKind  = "crawler-person"
-)
-
 type CrawlingEntry struct {
 	ScheduleTime time.Time
 	Host         string
@@ -41,7 +37,7 @@ func urlOfPackage(pkg string) *url.URL {
 }
 
 func schedulePackage(c appengine.Context, pkg string, sTime time.Time) error {
-	ddb := NewCachedDocDB(c, crawlerPackageKind)
+	ddb := NewCachedDocDB(c, kindCrawlerPackage)
 
 	var ent CrawlingEntry
 	err, _ := ddb.Get(pkg, &ent)
@@ -59,7 +55,7 @@ func schedulePackage(c appengine.Context, pkg string, sTime time.Time) error {
 	}
 
 	if mayAbsent {
-		CachedComputingInvalidate(c, hostAllKind, crawlerPackageKind+":"+ent.Host)
+		CachedComputingInvalidate(c, hostAllKind, kindCrawlerPackage+":"+ent.Host)
 	}
 
 	err = ddb.Put(pkg, &ent)
@@ -78,7 +74,7 @@ func appendPackage(c appengine.Context, pkg string) bool {
 		// log.Printf("  [appendPackage] Not a valid remote path: %s", pkg)
 		return false
 	}
-	ddb := NewCachedDocDB(c, crawlerPackageKind)
+	ddb := NewCachedDocDB(c, kindCrawlerPackage)
 
 	var ent CrawlingEntry
 	err, exists := ddb.Get(pkg, &ent)
@@ -97,7 +93,7 @@ func appendPackage(c appengine.Context, pkg string) bool {
 }
 
 func schedulePerson(c appengine.Context, site, username string, sTime time.Time) error {
-	ddb := NewCachedDocDB(c, crawlerPersonKind)
+	ddb := NewCachedDocDB(c, kindCrawlerPerson)
 
 	var ent CrawlingEntry
 
@@ -113,7 +109,7 @@ func schedulePerson(c appengine.Context, site, username string, sTime time.Time)
 	ent.ScheduleTime = sTime
 	ent.Host = site
 
-	CachedComputingInvalidate(c, hostAllKind, crawlerPersonKind+":"+ent.Host)
+	CachedComputingInvalidate(c, hostAllKind, kindCrawlerPerson+":"+ent.Host)
 
 	err := ddb.Put(id, &ent)
 	if err != nil {
@@ -127,7 +123,7 @@ func schedulePerson(c appengine.Context, site, username string, sTime time.Time)
 }
 
 func appendPerson(c appengine.Context, site, username string) bool {
-	ddb := NewCachedDocDB(c, crawlerPersonKind)
+	ddb := NewCachedDocDB(c, kindCrawlerPerson)
 
 	id := gcc.IdOfPerson(site, username)
 
@@ -147,20 +143,56 @@ func appendPerson(c appengine.Context, site, username string) bool {
 	return schedulePerson(c, site, username, time.Now()) == nil
 }
 
-func pushPackage(c appengine.Context, doc *gcc.Package) {
-	updateDocument(c, doc)
+func pushPackage(c appengine.Context, p *gcc.Package) (succ bool) {
+	// copy Package as a DocInfo
+	d := DocInfo {
+		Name:        p.Name,
+		Package:     p.ImportPath,
+		Synopsis:    p.Synopsis,
+		Description: p.Doc,
+		LastUpdated: time.Now(),
+		Author:      authorOfPackage(p.ImportPath),
+		ProjectURL:  p.ProjectURL,
+		StarCount:   p.StarCount,
+		ReadmeFn:    p.ReadmeFn,
+		ReadmeData:  p.ReadmeData,
+	}
 
-	for _, imp := range doc.Imports {
+	d.Imports = nil
+	for _, imp := range p.Imports {
+		if doc.IsValidRemotePath(imp) {
+			d.Imports = append(d.Imports, imp)
+		}
+	}
+	
+	// save DocInfo into fetchedDoc DB
+	ddb := NewDocDB(c, kindFetchedDoc)
+	err := ddb.Put(d.Package, &d)
+	if err != nil {
+		c.Errorf("ddb.Put(%s) failed: %v", err)
+		return false
+	}
+
+	// append new authors	
+	if strings.HasPrefix(d.Package, "github.com/") {
+		appendPerson(c, "github.com", d.Author)
+	} else if strings.HasPrefix(d.Package, "bitbucket.org/") {
+		appendPerson(c, "bitbucket.org", d.Author)
+	}
+	
+	for _, imp := range d.Imports {
 		appendPackage(c, imp)
 	}
-	log.Printf("[crawlPackage] References: %v", doc.References)
-	for _, ref := range doc.References {
+	log.Printf("[crawlPackage] References: %v", p.References)
+	for _, ref := range p.References {
 		appendPackage(c, ref)
 	}
 
-	schedulePackage(c, doc.ImportPath, time.Now().Add(DefaultPackageAge).Add(
+	schedulePackage(c, d.Package, time.Now().Add(DefaultPackageAge).Add(
 		time.Duration(rand.Int63n(int64(DefaultPackageAge)/10)-
 			int64(DefaultPackageAge)/5)))
+			
+	return true
 }
 
 func pushPerson(c appengine.Context, p *gcc.Person) (hasNewPkg bool) {
@@ -262,8 +294,8 @@ func fetchCrawlerKindInfo(c appengine.Context, kind string, now time.Time) (info
 func fetchCrawlerInfo(c appengine.Context) (info *CrawlerInfo) {
 	now := time.Now()
 	info = &CrawlerInfo{
-		Package: fetchCrawlerKindInfo(c, crawlerPackageKind, now),
-		Person:  fetchCrawlerKindInfo(c, crawlerPersonKind, now),
+		Package: fetchCrawlerKindInfo(c, kindCrawlerPackage, now),
+		Person:  fetchCrawlerKindInfo(c, kindCrawlerPerson, now),
 	}
 
 	info.CompTime = time.Now().Sub(now)
@@ -287,43 +319,81 @@ func findCrawlingEntry(c appengine.Context, kind string, id string) (*CrawlingEn
 	return nil, nil
 }
 
-func listCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
-	if kind != crawlerPackageKind && kind != crawlerPersonKind {
+const maxCrawlEntriesInCache = 1000
+
+func queryCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
+	q := datastore.NewQuery(kind).Filter("ScheduleTime<",
+		time.Now()).Order("ScheduleTime").KeysOnly().Limit(l)
+		
+	keys, err := q.GetAll(c, nil)
+	if err != nil {
 		return nil
 	}
-	q := datastore.NewQuery(kind).Filter("ScheduleTime<",
-		time.Now()).Order("ScheduleTime")
-
-	t := q.Run(c)
-	for {
-		var ent CrawlingEntry
-		key, err := t.Next(&ent)
-		if err != nil {
-			break
-		}
-
-		pkgs = append(pkgs, key.StringID())
-		if l > 0 && len(pkgs) >= l {
-			break
-		}
+	
+	pkgs = make([]string, len(keys))
+	for i, key := range keys {
+		pkgs[i] = key.StringID()
 	}
-
+	
 	return pkgs
 }
 
-func reportBadPackage(c appengine.Context, pkg string) {
-	ddb := NewCachedDocDB(c, crawlerPackageKind)
-	err := ddb.Delete(pkg)
-	if err != nil {
-		c.Errorf("Delete package %s in %s failed: %v", pkg, crawlerPackageKind, err)
-		return
-	}
+// returns nil if not found or other error
+func crawlEntriesInCache(c appengine.Context, kind string) (pkgs []string){
+	mcID := prefixToCrawl + kind
+	memcache.Gob.Get(c, mcID, &pkgs)
+	return pkgs
+}
 
-	c.Infof("Package entry %s in %s removed", pkg, crawlerPackageKind)
+func putCrawlEntriesInCache(c appengine.Context, kind string, pkgs []string){
+	mcID := prefixToCrawl + kind
+	memcache.Gob.Set(c, &memcache.Item{
+		Key:    mcID,
+		Object: pkgs,
+	})
+}
+
+func clearCrawlEntriesInCache(c appengine.Context, kind string){
+	mcID := prefixToCrawl + kind
+	memcache.Delete(c, mcID)
+}
+
+func listCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
+	if kind != kindCrawlerPackage && kind != kindCrawlerPerson {
+		return nil
+	}
+	
+	if l < 0 || l >= maxCrawlEntriesInCache {
+		return queryCrawlEntries(c, kind, l)
+	}
+	
+	cachedPkgs := crawlEntriesInCache(c, kind)
+	c.Infof("%d %s entries in cache", len(cachedPkgs), kind)
+	if len(cachedPkgs) < l {
+		// not enough entries, refetch by query
+		cachedPkgs = queryCrawlEntries(c, kind, maxCrawlEntriesInCache)
+		c.Infof("query %d %s entries", len(cachedPkgs), kind)
+	}
+	
+	// move from cache
+	pkgs = make([]string, l)
+	l = copy(pkgs, cachedPkgs)
+	pkgs = pkgs[:l]
+	cachedPkgs = cachedPkgs[l:]
+	c.Infof("%d %s entries got, %d left", len(pkgs), kind, len(cachedPkgs))
+	
+	if len(cachedPkgs) > 0 {
+		// write back if some left
+		putCrawlEntriesInCache(c, kind, cachedPkgs)
+	} else {
+		// or clear it if nothing left
+		clearCrawlEntriesInCache(c, kind)
+	}
+	return pkgs
 }
 
 func touchPackage(c appengine.Context, pkg string) (earlySchedule bool) {
-	ddb := NewCachedDocDB(c, crawlerPackageKind)
+	ddb := NewCachedDocDB(c, kindCrawlerPackage)
 
 	var ent CrawlingEntry
 	err, exists := ddb.Get(pkg, &ent)
@@ -343,4 +413,43 @@ func touchPackage(c appengine.Context, pkg string) (earlySchedule bool) {
 	}
 
 	return false
+}
+
+func indexFetchedDocs(c appengine.Context, ttl time.Duration) int {
+	start := time.Now()
+	q := datastore.NewQuery(kindFetchedDoc)
+	t := q.Run(c)
+	i := 0
+	for ; i < 1000 ; i ++ {
+		if time.Now().Sub(start) > ttl {
+			c.Infof("%v elapsed, quit with %d entries processed", ttl, i)
+			break
+		}
+		
+		var d DocInfo
+		k, err := t.Next(&d)
+		if err == datastore.Done {
+			c.Infof("t.Next Done: %d entries processed", i)
+			break
+		}
+		
+		if !DocGetOk(err) {
+			c.Errorf("t.Next failed: %v", err)
+			break
+		}
+		
+		err = processDocument(c, &d)
+		if err != nil {
+			c.Errorf("Index doc %s failed: %v", d.Package, err)
+			continue
+		}
+		
+		err = datastore.Delete(c, k)
+		if err != nil {
+			c.Errorf("Deleting doc %s failed: %v", d.Package, err)
+		}
+		c.Infof("%d. Process entry %s success!", (i + 1), d.Package)
+	}
+	
+	return i
 }

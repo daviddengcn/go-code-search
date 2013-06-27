@@ -10,19 +10,23 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	godoc "go/doc"
+	"bytes"
 )
 
-var templates = template.Must(template.ParseFiles("web/header.html",
-	"web/footer.html", "web/index.html", "web/search.html", "web/add.html",
-	"web/view.html", "web/crawler.html"))
+var templates = template.Must(template.ParseGlob(`web/*`))
 
 func init() {
 	http.HandleFunc("/search", pageSearch)
 	http.HandleFunc("/add", pageAdd)
 	http.HandleFunc("/view", pageView)
 	http.HandleFunc("/update", pageUpdate)
+	
 	http.HandleFunc("/crawler", pageCrawler)
+	http.HandleFunc("/db", pageDb)
 
+	http.HandleFunc("/index", pageIndex)
+	
 	gcc.Register(new(CrawlerServer))
 
 	// http//.HandleFunc("/clear", pageClear)
@@ -173,7 +177,7 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 		if !exists {
 			fmt.Fprintf(w, `<html><body>No such entry!`)
 
-			ent, _ := findCrawlingEntry(c, crawlerPackageKind, id)
+			ent, _ := findCrawlingEntry(c, kindCrawlerPackage, id)
 			if ent != nil {
 				fmt.Fprintf(w, ` Scheduled to be crawled at %s`,
 					ent.ScheduleTime.Format("2006-01-02 15:04:05"))
@@ -184,11 +188,16 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 				template.URLQueryEscaper(id))
 			return
 		}
+		
+		var descHTML bytes.Buffer
+		godoc.ToHTML(&descHTML, doc.Description, nil)
 
 		err = templates.ExecuteTemplate(w, "view.html", struct {
 			DocInfo
+			DescHTML template.HTML
 		}{
-			DocInfo: doc,
+			DocInfo:  doc,
+			DescHTML: template.HTML(descHTML.String()),
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -197,18 +206,26 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 }
 
 func pageUpdate(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("id")
+	id := strings.TrimSpace(r.FormValue("id"))
 	if id != "" {
 		c := appengine.NewContext(r)
-		updateImported(c, id)
+		updateDocInfo(c, id)
+		
+		http.Redirect(w, r, "view?id="+template.URLQueryEscaper(id), 302)
 	}
-
-	http.Redirect(w, r, "view?id="+template.URLQueryEscaper(id), 301)
 }
 
 func pageCrawler(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	err := templates.ExecuteTemplate(w, "crawler.html", fetchCrawlerInfo(c))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func pageDb(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	err := templates.ExecuteTemplate(w, "db.html", statDatabaseInfo(c))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -240,16 +257,24 @@ func pageTry(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Tokens: %v", tokens.Elements())
 }
 
+func pageIndex(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	cntIndex := indexFetchedDocs(c, 9*time.Minute)
+	cntUpdate := processToUpdate(c, 9*time.Minute)
+	
+	fmt.Fprintf(w, "Index: %d, Update: %d", cntIndex, cntUpdate)
+}
+
 type CrawlerServer struct{}
 
 func (cs *CrawlerServer) FetchPackageList(r *http.Request, l int) (pkgs []string) {
 	c := appengine.NewContext(r)
-	return listCrawlEntries(c, crawlerPackageKind, l)
+	return listCrawlEntries(c, kindCrawlerPackage, l)
 }
 
 func (cs *CrawlerServer) FetchPersonList(r *http.Request, l int) (ids []string) {
 	c := appengine.NewContext(r)
-	return listCrawlEntries(c, crawlerPersonKind, l)
+	return listCrawlEntries(c, kindCrawlerPerson, l)
 }
 
 func (cs *CrawlerServer) PushPackage(r *http.Request, p *gcc.Package) {
@@ -259,7 +284,7 @@ func (cs *CrawlerServer) PushPackage(r *http.Request, p *gcc.Package) {
 
 func (cs *CrawlerServer) ReportBadPackage(r *http.Request, pkg string) {
 	c := appengine.NewContext(r)
-	reportBadPackage(c, pkg)
+	deletePackage(c, pkg)
 }
 
 func (cs *CrawlerServer) PushPerson(r *http.Request, p *gcc.Person) (NewPackage bool) {

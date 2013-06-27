@@ -4,8 +4,6 @@ import (
 	"appengine"
 	"bytes"
 	"github.com/agonopol/go-stem/stemmer"
-	"github.com/daviddengcn/gddo/doc"
-	"github.com/daviddengcn/go-code-crawl"
 	"github.com/daviddengcn/go-villa"
 	"html/template"
 	"log"
@@ -15,6 +13,7 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+	"regexp"
 )
 
 type SearchResult struct {
@@ -237,6 +236,12 @@ func CheckCamel(last, current rune) RuneType {
 	return TokenBody
 }
 
+var patURL = regexp.MustCompile(`http[s]?://\S+`)
+
+func filterURLs(text string) string {
+	return patURL.ReplaceAllString(text, " ")
+}
+
 func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	/*
 		for _, token := range strings.FieldsFunc(text, isTermSep) {
@@ -244,6 +249,9 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 			tokens.Put(token)
 		}
 	*/
+	
+	text = filterURLs(text)
+	
 	lastToken := ""
 	Tokenize(CheckRuneType, bytes.NewReader([]byte(text)), func(token string) {
 		if isCamel(token) {
@@ -286,7 +294,7 @@ func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
 
 	s := float64(0.02 * float64(len(tokens)))
 
-	synopsis := strings.ToLower(doc.Synopsis)
+	synopsis := filterURLs(strings.ToLower(doc.Synopsis))
 	name := strings.ToLower(doc.Name)
 	pkg := strings.ToLower(doc.Package)
 
@@ -311,6 +319,9 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	ts := NewTokenSet(c, "index:")
 
 	tokens := appendTokens(nil, q)
+	if len(tokens) == 0 {
+		return &SearchResult{}, nil, nil
+	}
 
 	ids, err := ts.Search("doc", tokens)
 	if err != nil {
@@ -318,7 +329,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	}
 	log.Printf("  %d ids got for query %s", len(ids), q)
 
-	ddb := NewCachedDocDB(c, "doc")
+	ddb := NewCachedDocDB(c, kindDocDB)
 
 	docs := make([]DocInfo, len(ids))
 	for i, id := range ids {
@@ -375,8 +386,8 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	}, tokens, nil
 }
 
-func index(c appengine.Context, doc DocInfo) error {
-	ts := NewTokenSet(c, "index:")
+func index(c appengine.Context, doc *DocInfo) error {
+	ts := NewTokenSet(c, prefixIndex)
 	var tokens villa.StrSet
 	tokens = appendTokens(tokens, doc.Name)
 	tokens = appendTokens(tokens, doc.Package)
@@ -387,13 +398,13 @@ func index(c appengine.Context, doc DocInfo) error {
 	id := doc.Package
 
 	log.Printf("  indexing %s, %v", id, tokens)
-	err := ts.Index("doc", id, tokens)
+	err := ts.Index(fieldIndex, id, tokens)
 	if err != nil {
 		return err
 	}
 
-	ddb := NewCachedDocDB(c, "doc")
-	err = ddb.Put(id, &doc)
+	ddb := NewCachedDocDB(c, kindDocDB)
+	err = ddb.Put(id, doc)
 	if err != nil {
 		return err
 	}
@@ -434,77 +445,78 @@ func updateImported(c appengine.Context, pkg string) {
 	}
 }
 
-func updateDocument(c appengine.Context, pdoc *gcc.Package) {
-	var d DocInfo
-
-	ddb := NewCachedDocDB(c, "doc")
-
-	// Set initial values. Error is ignored
-	ddb.Get(pdoc.ImportPath, &d)
-
-	d.Name = pdoc.Name
-	d.Package = pdoc.ImportPath
-	d.Synopsis = pdoc.Synopsis
-	d.Description = pdoc.Doc
-	d.LastUpdated = time.Now()
-	d.Author = authorOfPackage(pdoc.ImportPath)
-	d.ProjectURL = pdoc.ProjectURL
-	if pdoc.StarCount >= 0 {
-		// if pdoc.StarCount < 0, it is not correctly fetched, remain old value
-		d.StarCount = pdoc.StarCount
-	}
-
-	d.ReadmeFn, d.ReadmeData = pdoc.ReadmeFn, pdoc.ReadmeData
-
-	//	for fn, data := range pdoc.ReadmeFiles {
-	//		d.ReadmeFn, d.ReadmeData = fn, string(data)
-	//	}
-	//log.Printf("Readme of %s: %v", d.Package, pdoc.ReadmeFiles)
-
-	//log.Printf("[updateDocument] pdoc.References: %v", pdoc.References)
-
-	d.Imports = nil
-	for _, imp := range pdoc.Imports {
-		if doc.IsValidRemotePath(imp) {
-			d.Imports = append(d.Imports, imp)
+func diffStringList(l1, l2 []string) (diff []string) {
+	sort.Strings(l1)
+	sort.Strings(l2)
+	
+	for i, j := 0, 0; i < len(l1) || j < len(l2); {
+		switch {
+		case i == len(l1) || j < len(l2) && l2[j] < l1[i]:
+			diff = append(diff, l2[j])
+			j ++
+			
+		case j == len(l2) || i < len(l1) && l1[i] < l2[j]:
+			diff = append(diff, l1[i])
+			i ++
+			
+		default:
+			i ++
+			j ++
 		}
 	}
+	
+	return diff
+}
 
-	ts := NewTokenSet(c, "import:")
-	importedPkgs, err := ts.Search("import", villa.NewStrSet(d.Package))
-	if err == nil {
-		d.ImportedPkgs = importedPkgs
+func processDocument(c appengine.Context, d *DocInfo) error {
+	ddb := NewCachedDocDB(c, kindDocDB)
+	
+	pkg := d.Package
+	
+	// fetch saved DocInfo
+	var savedD DocInfo
+	err, exists := ddb.Get(pkg, &savedD)
+	if err != nil {
+		return err
+	}
+	if exists && d.StarCount < 0 {
+		d.StarCount = savedD.StarCount
 	}
 
+	// get imported packages
+	ts := NewTokenSet(c, prefixImports)
+	importedPkgs, err := ts.Search(fieldImports, villa.NewStrSet(pkg))
+	if err != nil {
+		return err
+	}
+	d.ImportedPkgs = importedPkgs
+	
+	// index imports
+	err = ts.Index(fieldImports, pkg, villa.NewStrSet(d.Imports...))
+	if err != nil {
+		return err
+	}
+	
+	// update static score and index it
 	d.updateStaticScore()
-
 	err = index(c, d)
 	if err != nil {
-		log.Printf("Indexing %s failed: %v", d.Package, err)
+		return err
 	}
-	c.Infof("Indexing %s success", d.Package)
-
-	// index importing links
-	ts = NewTokenSet(c, "import:")
-	imports := villa.NewStrSet(d.Imports...)
-	id := d.Package
-	c.Infof("  indexing imports of %s: %d", id, len(imports))
-	err = ts.Index("import", id, imports)
-	if err != nil {
-		log.Printf("Indexing imports of %s failed: %v", d.Package, err)
-	}
-	/*
-		// update imported packages
-		for _, imp := range d.Imports {
-			updateImported(c, imp)
+	
+	pkgs := diffStringList(savedD.Imports, d.Imports)
+	if len(pkgs) > 0 {
+		ddb := NewDocDB(c, kindToUpdate)
+		errs := ddb.PutMulti(pkgs, make([]struct{}, len(pkgs)))
+		if errs.ErrorCount() > 0 {
+			c.Errorf("PutMulti(%d packages) to %s with %d failed: %v", 
+				len(pkgs), kindToUpdate, errs.ErrorCount(), errs)
+		} else {
+			c.Infof("%d packages add to %s", len(pkgs), kindToUpdate)
 		}
-	*/
-
-	if strings.HasPrefix(d.Package, "github.com/") {
-		appendPerson(c, "github.com", d.Author)
-	} else if strings.HasPrefix(d.Package, "bitbucket.org/") {
-		appendPerson(c, "bitbucket.org", d.Author)
 	}
+	
+	return nil
 }
 
 func markText(text string, tokens villa.StrSet, markFunc func(word string) template.HTML) template.HTML {

@@ -77,3 +77,17 @@ div.half {
     height: auto;
     display: inline-block;
 }
+
+div.desc pre {
+    background: #e0e0e0;
+    margin: 0 0 10px;
+    padding: 5px;
+    font-size: 13px;
+    border-radius: 5px;
+    
+    font-family: monospace;
+}
+
+pre.readme {
+    font-size: 13px;
+}

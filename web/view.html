@@ -3,11 +3,13 @@
 <div class="code">
     import "{{.Package}}"
 </div>
-<pre>{{if .Description}}
-{{.Description}}
-{{else}}{{if .ReadmeData}}({{.ReadmeFn}})
+{{if .Description}}
+<div class="desc">
+    {{.DescHTML}}
+</div>
+{{else}}{{if .ReadmeData}}<pre class="readme">({{.ReadmeFn}})
 {{.ReadmeData}}
-{{end}}{{end}}</pre>
+</pre>{{end}}{{end}}
 <div>Imported by {{len .ImportedPkgs}} package(s):</div>
     <ol>
         {{range .ImportedPkgs}}
