@@ -3,12 +3,14 @@ package gocode
 import (
 	"appengine"
 	"appengine/datastore"
+	"errors"
 	"github.com/daviddengcn/gddo/doc"
 	"github.com/daviddengcn/go-code-crawl"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -40,18 +42,24 @@ func urlOfPackage(pkg string) *url.URL {
 
 func schedulePackage(c appengine.Context, pkg string, sTime time.Time) error {
 	ddb := NewCachedDocDB(c, crawlerPackageKind)
-	
+
 	var ent CrawlingEntry
 	err, _ := ddb.Get(pkg, &ent)
 	if err != nil {
 		log.Printf("[scheduledPackage] Get(crawler, %s) failed: %v", pkg, err)
 	}
 
+	mayAbsent := err != nil // ddb.Get may failed even if the doc exists
+
 	ent.ScheduleTime = sTime
 
 	u := urlOfPackage(pkg)
 	if u != nil {
 		ent.Host = u.Host
+	}
+
+	if mayAbsent {
+		CachedComputingInvalidate(c, hostAllKind, crawlerPackageKind+":"+ent.Host)
 	}
 
 	err = ddb.Put(pkg, &ent)
@@ -90,20 +98,24 @@ func appendPackage(c appengine.Context, pkg string) bool {
 
 func schedulePerson(c appengine.Context, site, username string, sTime time.Time) error {
 	ddb := NewCachedDocDB(c, crawlerPersonKind)
-	
+
 	var ent CrawlingEntry
 
 	id := gcc.IdOfPerson(site, username)
-	err, _ := ddb.Get(id, &ent)
-	if err != nil {
-		log.Printf("  [scheduledPerson] crawler-person.Get(%s) failed: %v", id,
-			err)
-	}
+	/*
+		err, _ := ddb.Get(id, &ent)
+		if err != nil {
+			log.Printf("  [scheduledPerson] crawler-person.Get(%s) failed: %v", id,
+				err)
+		}
+	*/
 
 	ent.ScheduleTime = sTime
 	ent.Host = site
 
-	err = ddb.Put(id, &ent)
+	CachedComputingInvalidate(c, hostAllKind, crawlerPersonKind+":"+ent.Host)
+
+	err := ddb.Put(id, &ent)
 	if err != nil {
 		c.Errorf("  [scheduledPerson] crawler-person.Put(%s) failed: %v", id,
 			err)
@@ -145,7 +157,7 @@ func pushPackage(c appengine.Context, doc *gcc.Package) {
 	for _, ref := range doc.References {
 		appendPackage(c, ref)
 	}
-	
+
 	schedulePackage(c, doc.ImportPath, time.Now().Add(DefaultPackageAge).Add(
 		time.Duration(rand.Int63n(int64(DefaultPackageAge)/10)-
 			int64(DefaultPackageAge)/5)))
@@ -157,13 +169,13 @@ func pushPerson(c appengine.Context, p *gcc.Person) (hasNewPkg bool) {
 			hasNewPkg = true
 		}
 	}
-	
+
 	site, username := gcc.ParsePersonId(p.Id)
 
 	schedulePerson(c, site, username, time.Now().Add(DefaultPersonAge).Add(
 		time.Duration(rand.Int63n(int64(DefaultPersonAge)/10)-
 			int64(DefaultPersonAge)/5)))
-			
+
 	return
 }
 
@@ -177,24 +189,55 @@ type HostInfo struct {
 	NeedCrawl int
 }
 
-type CrawlerInfo struct {
+type CrawlerKindInfo struct {
 	Total     int
 	NeedCrawl int
 
 	Hosts []HostInfo
 }
 
-func fetchCrawlerInfo(c appengine.Context) (info CrawlerInfo) {
-	now := time.Now()
-	var err error
-	q := datastore.NewQuery(crawlerPackageKind)
-	info.Total, err = q.Count(c)
-	if err != nil {
-		log.Printf("  crawler.Count() failed: %v", err)
-		info.Total = -1
+type CrawlerInfo struct {
+	Package, Person *CrawlerKindInfo
+	CompTime        time.Duration
+}
+
+const hostAllKind = "host-all"
+
+func compHostAll(c appengine.Context, dbKindHost string, v interface{}) (err error) {
+	pv, ok := v.(*int)
+	if !ok {
+		return errors.New("Wrong type")
 	}
 
-	q = datastore.NewQuery(crawlerPackageKind).Project("Host").Distinct()
+	p := strings.Index(dbKindHost, ":")
+	dbKind, host := dbKindHost[:p], dbKindHost[p+1:]
+
+	q := datastore.NewQuery(dbKind)
+
+	if host != "<all>" {
+		q = q.Filter("Host=", host)
+	}
+	*pv, err = q.Count(c)
+	return err
+}
+
+func fetchCrawlerKindInfo(c appengine.Context, kind string, now time.Time) (info *CrawlerKindInfo) {
+	ccHostAll := NewCachedComputing(c, hostAllKind, compHostAll)
+
+	info = &CrawlerKindInfo{}
+
+	var err error
+	_ = ccHostAll.Get(kind+":<all>", &(info.Total))
+
+	q := datastore.NewQuery(kind).Filter("ScheduleTime<", now)
+	info.NeedCrawl, err = q.Count(c)
+	if err != nil {
+		log.Printf("  crawler.ScheduleTime<time.Now().Count() failed: %v", err)
+		info.NeedCrawl = -1
+	}
+
+	// get all possible sites
+	q = datastore.NewQuery(kind).Project("Host").Distinct()
 	var ents []CrawlingEntry
 	_, err = q.GetAll(c, &ents)
 	if err != nil {
@@ -203,21 +246,29 @@ func fetchCrawlerInfo(c appengine.Context) (info CrawlerInfo) {
 		info.Hosts = make([]HostInfo, len(ents))
 		for i, ent := range ents {
 			info.Hosts[i].Host = ent.Host
-			q = datastore.NewQuery(crawlerPackageKind).Filter("Host=", ent.Host)
-			info.Hosts[i].Total, _ = q.Count(c)
-			q = datastore.NewQuery(crawlerPackageKind).Filter("Host=", ent.Host).Filter("ScheduleTime<", now)
+
+			_ = ccHostAll.Get(kind+":"+ent.Host, &(info.Hosts[i].Total))
+			//q = datastore.NewQuery(kind).Filter("Host=", ent.Host)
+			//info.Hosts[i].Total, _ = q.Count(c)
+
+			q = datastore.NewQuery(kind).Filter("Host=", ent.Host).Filter("ScheduleTime<", now)
 			info.Hosts[i].NeedCrawl, _ = q.Count(c)
 		}
 	}
 
-	q = datastore.NewQuery(crawlerPackageKind).Filter("ScheduleTime<", now)
-	info.NeedCrawl, err = q.Count(c)
-	if err != nil {
-		log.Printf("  crawler.ScheduleTIme<time.Now().Count() failed: %v", err)
-		info.NeedCrawl = -1
+	return
+}
+
+func fetchCrawlerInfo(c appengine.Context) (info *CrawlerInfo) {
+	now := time.Now()
+	info = &CrawlerInfo{
+		Package: fetchCrawlerKindInfo(c, crawlerPackageKind, now),
+		Person:  fetchCrawlerKindInfo(c, crawlerPersonKind, now),
 	}
 
-	return
+	info.CompTime = time.Now().Sub(now)
+
+	return info
 }
 
 func findCrawlingEntry(c appengine.Context, kind string, id string) (*CrawlingEntry, error) {
@@ -240,9 +291,9 @@ func listCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
 	if kind != crawlerPackageKind && kind != crawlerPersonKind {
 		return nil
 	}
-	q := datastore.NewQuery(kind).Filter("ScheduleTime<", 
+	q := datastore.NewQuery(kind).Filter("ScheduleTime<",
 		time.Now()).Order("ScheduleTime")
-		
+
 	t := q.Run(c)
 	for {
 		var ent CrawlingEntry
@@ -250,13 +301,13 @@ func listCrawlEntries(c appengine.Context, kind string, l int) (pkgs []string) {
 		if err != nil {
 			break
 		}
-		
+
 		pkgs = append(pkgs, key.StringID())
 		if l > 0 && len(pkgs) >= l {
 			break
 		}
 	}
-	
+
 	return pkgs
 }
 
@@ -267,6 +318,29 @@ func reportBadPackage(c appengine.Context, pkg string) {
 		c.Errorf("Delete package %s in %s failed: %v", pkg, crawlerPackageKind, err)
 		return
 	}
-	
+
 	c.Infof("Package entry %s in %s removed", pkg, crawlerPackageKind)
+}
+
+func touchPackage(c appengine.Context, pkg string) (earlySchedule bool) {
+	ddb := NewCachedDocDB(c, crawlerPackageKind)
+
+	var ent CrawlingEntry
+	err, exists := ddb.Get(pkg, &ent)
+	if err != nil {
+		log.Printf("[scheduledPackage] Get(crawler, %s) failed: %v", pkg, err)
+	}
+
+	if exists {
+		if ent.ScheduleTime.Before(time.Now()) {
+			return true
+		}
+	}
+
+	err = schedulePackage(c, pkg, time.Now())
+	if err != nil {
+		c.Errorf("[touchPackage] schedulePackage(%s) failed: %v", pkg, err)
+	}
+
+	return false
 }

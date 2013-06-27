@@ -71,3 +71,9 @@ td.numcell {
     font-family: courier new;
     text-align: right;
 }
+
+div.half {
+    width: 49%;
+    height: auto;
+    display: inline-block;
+}

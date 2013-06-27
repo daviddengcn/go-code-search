@@ -15,6 +15,11 @@ indexes:
   - name: Host
   - name: ScheduleTime
 
+- kind: crawler-person
+  properties:
+  - name: Host
+  - name: ScheduleTime
+
 - kind: index
   properties:
   - name: Token

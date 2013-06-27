@@ -3,9 +3,8 @@ package gocode
 import (
 	"appengine"
 	"fmt"
-	"github.com/daviddengcn/go-villa"
 	"github.com/daviddengcn/go-code-crawl"
-	"github.com/daviddengcn/go-rpc"
+	"github.com/daviddengcn/go-villa"
 	"html/template"
 	"log"
 	"net/http"
@@ -24,7 +23,7 @@ func init() {
 	http.HandleFunc("/update", pageUpdate)
 	http.HandleFunc("/crawler", pageCrawler)
 
-	rpc.Register(new(CrawlerServer))
+	gcc.Register(new(CrawlerServer))
 
 	// http//.HandleFunc("/clear", pageClear)
 
@@ -117,7 +116,7 @@ mainLoop:
 
 func pageSearch(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
-	
+
 	c := appengine.NewContext(r)
 	q := strings.TrimSpace(r.FormValue("q"))
 	results, tokens, err := search(c, q)
@@ -126,12 +125,12 @@ func pageSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := struct {
-		Q       string
-		Results *ShowResults
+		Q          string
+		Results    *ShowResults
 		SearchTime time.Duration
 	}{
-		Q:       q,
-		Results: showSearchResults(results, tokens),
+		Q:          q,
+		Results:    showSearchResults(results, tokens),
 		SearchTime: time.Now().Sub(startTime),
 	}
 	err = templates.ExecuteTemplate(w, "search.html", data)
@@ -149,7 +148,7 @@ func pageAdd(w http.ResponseWriter, r *http.Request) {
 		for _, pkg := range pkgs {
 			pkg = strings.TrimSpace(pkg)
 			if appendPackage(c, pkg) {
-//				addCheckTask(c, "package", pkg)
+				//				addCheckTask(c, "package", pkg)
 			}
 		}
 	}
@@ -241,7 +240,7 @@ func pageTry(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Tokens: %v", tokens.Elements())
 }
 
-type CrawlerServer struct {}
+type CrawlerServer struct{}
 
 func (cs *CrawlerServer) FetchPackageList(r *http.Request, l int) (pkgs []string) {
 	c := appengine.NewContext(r)
@@ -266,6 +265,21 @@ func (cs *CrawlerServer) ReportBadPackage(r *http.Request, pkg string) {
 func (cs *CrawlerServer) PushPerson(r *http.Request, p *gcc.Person) (NewPackage bool) {
 	c := appengine.NewContext(r)
 	return pushPerson(c, p)
+}
+
+func (cs *CrawlerServer) TouchPackage(r *http.Request, pkg string) (earlySchedule bool) {
+	c := appengine.NewContext(r)
+	return touchPackage(c, pkg)
+}
+
+func (cs *CrawlerServer) AppendPackages(r *http.Request, pkgs []string) (newNum int) {
+	c := appengine.NewContext(r)
+	for _, pkg := range pkgs {
+		if appendPackage(c, pkg) {
+			newNum++
+		}
+	}
+	return newNum
 }
 
 func (cs *CrawlerServer) LastError() error {

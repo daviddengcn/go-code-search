@@ -5,8 +5,8 @@ import (
 	"bytes"
 	"github.com/agonopol/go-stem/stemmer"
 	"github.com/daviddengcn/gddo/doc"
-	"github.com/daviddengcn/go-villa"
 	"github.com/daviddengcn/go-code-crawl"
+	"github.com/daviddengcn/go-villa"
 	"html/template"
 	"log"
 	"math"
@@ -75,19 +75,19 @@ func projectOfPackage(pkg string) string {
 }
 
 type DocInfo struct {
-	Name         string
-	Package      string
-	Author       string
-	LastUpdated  time.Time
-	StarCount    int
-	Synopsis     string   `datastore:",noindex"`
-	Description  string   `datastore:",noindex"`
-	ImportedPkgs []string `datastore:",noindex"`
-	StaticScore  float64  `datastore:",noindex"`
-	Imports      []string `datastore:",noindex"`
-	ProjectURL   string   `datastore:",noindex"`
-	ReadmeFn     string   `datastore:",noindex"`
-	ReadmeData   string   `datastore:",noindex"`
+	Name         string    `datastore:",noindex"`
+	Package      string    `datastore:",noindex"`
+	Author       string    `datastore:",noindex"`
+	LastUpdated  time.Time `datastore:",noindex"`
+	StarCount    int       `datastore:",noindex"`
+	Synopsis     string    `datastore:",noindex"`
+	Description  string    `datastore:",noindex"`
+	ImportedPkgs []string  `datastore:",noindex"`
+	StaticScore  float64   `datastore:",noindex"`
+	Imports      []string  `datastore:",noindex"`
+	ProjectURL   string    `datastore:",noindex"`
+	ReadmeFn     string    `datastore:",noindex"`
+	ReadmeData   string    `datastore:",noindex"`
 
 	MatchScore float64 `datastore:"-"`
 	Score      float64 `datastore:"-"`
@@ -455,10 +455,10 @@ func updateDocument(c appengine.Context, pdoc *gcc.Package) {
 	}
 
 	d.ReadmeFn, d.ReadmeData = pdoc.ReadmeFn, pdoc.ReadmeData
-	
-//	for fn, data := range pdoc.ReadmeFiles {
-//		d.ReadmeFn, d.ReadmeData = fn, string(data)
-//	}
+
+	//	for fn, data := range pdoc.ReadmeFiles {
+	//		d.ReadmeFn, d.ReadmeData = fn, string(data)
+	//	}
 	//log.Printf("Readme of %s: %v", d.Package, pdoc.ReadmeFiles)
 
 	//log.Printf("[updateDocument] pdoc.References: %v", pdoc.References)
@@ -493,12 +493,12 @@ func updateDocument(c appengine.Context, pdoc *gcc.Package) {
 	if err != nil {
 		log.Printf("Indexing imports of %s failed: %v", d.Package, err)
 	}
-/*	
-	// update imported packages
-	for _, imp := range d.Imports {
-		updateImported(c, imp)
-	}
-*/
+	/*
+		// update imported packages
+		for _, imp := range d.Imports {
+			updateImported(c, imp)
+		}
+	*/
 
 	if strings.HasPrefix(d.Package, "github.com/") {
 		appendPerson(c, "github.com", d.Author)
