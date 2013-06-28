@@ -287,6 +287,24 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	return tokens
 }
 
+func matchToken(token string, text string, tokens villa.StrSet) bool {
+	if strings.Index(text, token) >= 0 {
+		return true
+	}
+	
+	if tokens.In(token) {
+		return true
+	}
+	
+	for tk := range tokens {
+		if strings.HasPrefix(tk, token) || strings.HasSuffix(tk, token) {
+			return true
+		}
+	}
+	
+	return false
+}
+
 func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
 	if len(tokens) == 0 {
 		return 1.
@@ -294,20 +312,28 @@ func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
 
 	s := float64(0.02 * float64(len(tokens)))
 
-	synopsis := filterURLs(strings.ToLower(doc.Synopsis))
+	filteredSyn := filterURLs(doc.Synopsis)
+	synopsis := strings.ToLower(filteredSyn)
+	synTokens := appendTokens(nil, filteredSyn)
 	name := strings.ToLower(doc.Name)
+	nameTokens := appendTokens(nil, name)
 	pkg := strings.ToLower(doc.Package)
+	pkgTokens := appendTokens(nil, doc.Package)
 
+	if doc.Package == "github.com/PuerkitoBio/goquery" {
+		log.Printf("tokens: %v, doc: %+v, synTokens: %v", tokens, doc, synTokens)
+	}
+			
 	for token := range tokens {
-		if strings.Index(synopsis, token) >= 0 {
+		if matchToken(token, synopsis, synTokens) {
 			s += 0.25
 		}
 
-		if strings.Index(name, token) >= 0 {
+		if matchToken(token, name, nameTokens) {
 			s += 0.4
 		}
 
-		if strings.Index(pkg, token) >= 0 {
+		if matchToken(token, pkg, pkgTokens) {
 			s += 0.1
 		}
 	}
@@ -327,7 +353,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	log.Printf("  %d ids got for query %s", len(ids), q)
+	c.Infof("%d ids got for query %s", len(ids), q)
 
 	ddb := NewCachedDocDB(c, kindDocDB)
 
@@ -335,7 +361,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	for i, id := range ids {
 		err, exists := ddb.Get(id, &docs[i])
 		if err != nil {
-			log.Printf("  ddb.Get(%s,) failed: %v", id, err)
+			c.Errorf("  ddb.Get(%s,) failed: %v", id, err)
 		}
 
 		if exists {

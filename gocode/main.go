@@ -132,10 +132,12 @@ func pageSearch(w http.ResponseWriter, r *http.Request) {
 		Q          string
 		Results    *ShowResults
 		SearchTime time.Duration
+		BottomQ    bool
 	}{
 		Q:          q,
 		Results:    showSearchResults(results, tokens),
 		SearchTime: time.Now().Sub(startTime),
+		BottomQ:    len(results.Docs) >= 5,
 	}
 	err = templates.ExecuteTemplate(w, "search.html", data)
 	if err != nil {
