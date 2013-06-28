@@ -2,17 +2,15 @@ package gocode
 
 import (
 	"appengine"
-	"bytes"
 	"github.com/agonopol/go-stem/stemmer"
 	"github.com/daviddengcn/go-villa"
-	"html/template"
+	"github.com/daviddengcn/go-index"
 	"log"
 	"math"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 	"regexp"
 )
 
@@ -182,30 +180,30 @@ func normWord(word string) string {
 	return string(stemmer.Stem([]byte(word)))
 }
 
-func CheckRuneType(last, current rune) RuneType {
+func CheckRuneType(last, current rune) index.RuneType {
 	if isTermSep(current) {
-		return TokenSep
+		return index.TokenSep
 	}
 
 	if current > 128 {
-		return TokenStart
+		return index.TokenStart
 	}
 
 	if unicode.IsLetter(current) {
 		if unicode.IsLetter(last) {
-			return TokenBody
+			return index.TokenBody
 		}
-		return TokenStart
+		return index.TokenStart
 	}
 
 	if unicode.IsNumber(current) {
 		if unicode.IsNumber(last) {
-			return TokenBody
+			return index.TokenBody
 		}
-		return TokenStart
+		return index.TokenStart
 	}
 
-	return TokenStart
+	return index.TokenStart
 }
 
 func isCamel(token string) bool {
@@ -228,12 +226,12 @@ func isCamel(token string) bool {
 	return upper && lower
 }
 
-func CheckCamel(last, current rune) RuneType {
+func CheckCamel(last, current rune) index.RuneType {
 	if unicode.IsUpper(current) {
-		return TokenStart
+		return index.TokenStart
 	}
 
-	return TokenBody
+	return index.TokenBody
 }
 
 var patURL = regexp.MustCompile(`http[s]?://\S+`)
@@ -253,28 +251,32 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	text = filterURLs(text)
 	
 	lastToken := ""
-	Tokenize(CheckRuneType, bytes.NewReader([]byte(text)), func(token string) {
-		if isCamel(token) {
+	index.Tokenize(CheckRuneType, villa.NewPByteSlice([]byte(text)), func(token []byte) error {
+		tokenStr := string(token)
+		if isCamel(tokenStr) {
 			last := ""
-			Tokenize(CheckCamel, bytes.NewReader([]byte(token)), func(token string) {
-				token = normWord(token)
-				tokens.Put(token)
+			index.Tokenize(CheckCamel, villa.NewPByteSlice(token), func(token []byte) error {
+				tokenStr = string(token)
+				tokenStr = normWord(tokenStr)
+				tokens.Put(tokenStr)
 
 				if last != "" {
-					tokens.Put(last + "-" + token)
+					tokens.Put(last + "-" + string(tokenStr))
 				}
 
-				last = token
+				last = tokenStr
+				return nil
 			})
 		}
-		token = normWord(token)
-		tokens.Put(token)
+		tokenStr = normWord(tokenStr)
+		tokens.Put(tokenStr)
 
-		if token[0] > 128 && len(lastToken) > 0 && lastToken[0] > 128 {
-			tokens.Put(lastToken + token)
+		if tokenStr[0] > 128 && len(lastToken) > 0 && lastToken[0] > 128 {
+			tokens.Put(lastToken + tokenStr)
 		}
 
-		lastToken = token
+		lastToken = tokenStr
+		return nil
 	})
 	/*
 		var s scanner.Scanner
@@ -412,7 +414,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 	}, tokens, nil
 }
 
-func index(c appengine.Context, doc *DocInfo) error {
+func doIndex(c appengine.Context, doc *DocInfo) error {
 	ts := NewTokenSet(c, prefixIndex)
 	var tokens villa.StrSet
 	tokens = appendTokens(tokens, doc.Name)
@@ -525,7 +527,7 @@ func processDocument(c appengine.Context, d *DocInfo) error {
 	
 	// update static score and index it
 	d.updateStaticScore()
-	err = index(c, d)
+	err = doIndex(c, d)
 	if err != nil {
 		return err
 	}
@@ -543,59 +545,6 @@ func processDocument(c appengine.Context, d *DocInfo) error {
 	}
 	
 	return nil
-}
-
-func markText(text string, tokens villa.StrSet, markFunc func(word string) template.HTML) template.HTML {
-	var outBuf bytes.Buffer
-	inBuf := []byte(text)
-	if len(inBuf) == 0 {
-		return ""
-	}
-	if len(tokens) == 0 {
-		// no tokens, simply convert text to HTML
-		template.HTMLEscape(&outBuf, inBuf)
-		return template.HTML(outBuf.String())
-	}
-	p := 0
-	r, sz := utf8.DecodeRune(inBuf)
-	for len(inBuf) > 0 {
-		// seperator
-		for isTermSep(r) {
-			p += sz
-			if p < len(inBuf) {
-				r, sz = utf8.DecodeRune(inBuf[p:])
-			} else {
-				break
-			}
-		}
-		if p > 0 {
-			template.HTMLEscape(&outBuf, inBuf[:p])
-			inBuf, p = inBuf[p:], 0
-			if len(inBuf) == 0 {
-				break
-			}
-		}
-
-		// word
-		for !isTermSep(r) {
-			p += sz
-			if p < len(inBuf) {
-				r, sz = utf8.DecodeRune(inBuf[p:])
-			} else {
-				break
-			}
-		}
-		wordBuf := inBuf[:p]
-		word := string(wordBuf)
-		if tokens.In(normWord(word)) {
-			outBuf.WriteString(string(markFunc(word)))
-		} else {
-			outBuf.Write(wordBuf)
-		}
-		inBuf, p = inBuf[p:], 0
-	}
-
-	return template.HTML(outBuf.String())
 }
 
 func score(scoreI, scoreGap, scoreJ, wholeLen, maxBytes int) int {
@@ -685,7 +634,7 @@ func selectSnippets(text string, tokens villa.StrSet, maxBytes int) string {
 		})
 	}
 
-	var outBuf bytes.Buffer
+	var outBuf villa.ByteSlice
 	for i, line := range selLines {
 		if line.idx > 1 && (i < 1 || line.idx != selLines[i-1].idx+1) {
 			outBuf.WriteString("...")
@@ -701,5 +650,5 @@ func selectSnippets(text string, tokens villa.StrSet, maxBytes int) string {
 		outBuf.WriteString("...")
 	}
 
-	return outBuf.String()
+	return string(outBuf)
 }

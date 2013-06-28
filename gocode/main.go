@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"github.com/daviddengcn/go-code-crawl"
 	"github.com/daviddengcn/go-villa"
+	"github.com/daviddengcn/go-index"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 	godoc "go/doc"
-	"bytes"
 )
 
 var templates = template.Must(template.ParseGlob(`web/*`))
@@ -65,8 +65,34 @@ type ShowResults struct {
 	Docs         []ShowDocInfo
 }
 
-func markWord(word string) template.HTML {
-	return "<b>" + template.HTML(template.HTMLEscapeString(word)) + "</b>"
+func markWord(word []byte) []byte {
+	buf := villa.ByteSlice("<b>")
+	template.HTMLEscape(&buf, word)
+	buf.Write([]byte("</b>"))
+	return buf
+}
+
+func markText(text string, tokens villa.StrSet,
+		markFunc func([]byte) []byte) template.HTML {
+	if len(text) == 0 {
+		return ""
+	}
+	
+	var outBuf villa.ByteSlice
+	
+	index.MarkText([]byte(text), CheckRuneType, func(token []byte) bool {
+		// needMark
+		return tokens.In(normWord(string(token)))
+	}, func(text []byte) error {
+		// output
+		template.HTMLEscape(&outBuf, text)
+		return nil
+	}, func(token []byte) error {
+		outBuf.Write(markFunc(token))
+		return nil
+	})
+	
+	return template.HTML(string(outBuf))
 }
 
 func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults {
@@ -191,7 +217,7 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		
-		var descHTML bytes.Buffer
+		var descHTML villa.ByteSlice
 		godoc.ToHTML(&descHTML, doc.Description, nil)
 
 		err = templates.ExecuteTemplate(w, "view.html", struct {
@@ -199,7 +225,7 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 			DescHTML template.HTML
 		}{
 			DocInfo:  doc,
-			DescHTML: template.HTML(descHTML.String()),
+			DescHTML: template.HTML(descHTML),
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
