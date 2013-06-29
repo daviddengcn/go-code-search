@@ -2,11 +2,12 @@ package gocode
 
 import (
 	"appengine"
+	"appengine/datastore"
+	"appengine/memcache"
 	"github.com/agonopol/go-stem/stemmer"
 	"github.com/daviddengcn/go-villa"
 	"github.com/daviddengcn/go-index"
 	"log"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ import (
 
 type SearchResult struct {
 	TotalResults int
-	Docs         []DocInfo
+	Docs         []*DocInfo
 }
 
 func authorOfPackage(pkg string) string {
@@ -40,37 +41,6 @@ func authorOfPackage(pkg string) string {
 	return parts[0]
 }
 
-func projectOfPackage(pkg string) string {
-	parts := strings.Split(pkg, "/")
-	if len(parts) == 0 {
-		return ""
-	}
-
-	switch parts[0] {
-	case "llamaslayers.net", "bazil.org":
-		if len(parts) > 1 {
-			return parts[1]
-		}
-	case "github.com", "code.google.com", "bitbucket.org", "labix.org":
-		if len(parts) > 2 {
-			return parts[2]
-		}
-	case "golanger.com":
-		return "golangers"
-
-	case "launchpad.net":
-		if len(parts) > 2 && strings.HasPrefix(parts[1], "~") {
-			return parts[2]
-		}
-		if len(parts) > 1 {
-			return parts[1]
-		}
-	case "cgl.tideland.biz":
-		return "tcgl"
-	}
-	return pkg
-}
-
 type DocInfo struct {
 	Name         string    `datastore:",noindex"`
 	Package      string    `datastore:",noindex"`
@@ -91,75 +61,7 @@ type DocInfo struct {
 }
 
 func (doc *DocInfo) updateStaticScore() {
-	s := float64(1)
-
-	author := doc.Author
-	if author == "" {
-		author = authorOfPackage(doc.Package)
-	}
-
-	project := projectOfPackage(doc.Package)
-
-	authorCount := make(map[string]int)
-	projectCount := make(map[string]int)
-	for _, imp := range doc.ImportedPkgs {
-		impProject := projectOfPackage(imp)
-		projectCount[impProject] = projectCount[impProject] + 1
-
-		impAuthor := authorOfPackage(imp)
-		if impAuthor != "" {
-			authorCount[impAuthor] = authorCount[impAuthor] + 1
-		}
-	}
-
-	for _, imp := range doc.ImportedPkgs {
-		vl := float64(1.)
-
-		impProject := projectOfPackage(imp)
-		vl /= float64(projectCount[impProject])
-
-		if impProject == project {
-			vl *= 0.1
-		}
-
-		impAuthor := authorOfPackage(imp)
-		if impAuthor != "" {
-			cnt := authorCount[impAuthor]
-			total := cnt
-			if total > 2 {
-				total = 2
-			}
-			if impAuthor == author {
-				vl *= 0.5 * float64(total) / float64(cnt)
-			} else {
-				vl *= float64(total) / float64(cnt)
-			}
-		}
-
-		s += vl
-	}
-
-	desc := strings.TrimSpace(doc.Description)
-	if len(desc) > 0 {
-		s += 1
-		if len(desc) > 100 {
-			s += 0.5
-		}
-
-		if strings.HasPrefix(desc, "Package "+doc.Name) {
-			s += 0.5
-		} else if strings.HasPrefix(desc, "package "+doc.Name) {
-			s += 0.4
-		}
-	}
-
-	starCount := doc.StarCount - 3
-	if starCount < 0 {
-		starCount = 0
-	}
-	s += math.Sqrt(float64(starCount)) * 0.5
-
-	doc.StaticScore = s
+	doc.StaticScore = calcStaticRank(doc)
 }
 
 func (doc *DocInfo) loadFromDB(c appengine.Context, id string) (err error, exists bool) {
@@ -307,40 +209,72 @@ func matchToken(token string, text string, tokens villa.StrSet) bool {
 	return false
 }
 
-func calcMatchScore(doc *DocInfo, tokens villa.StrSet) float64 {
-	if len(tokens) == 0 {
-		return 1.
-	}
-
-	s := float64(0.02 * float64(len(tokens)))
-
-	filteredSyn := filterURLs(doc.Synopsis)
-	synopsis := strings.ToLower(filteredSyn)
-	synTokens := appendTokens(nil, filteredSyn)
-	name := strings.ToLower(doc.Name)
-	nameTokens := appendTokens(nil, name)
-	pkg := strings.ToLower(doc.Package)
-	pkgTokens := appendTokens(nil, doc.Package)
-
-	if doc.Package == "github.com/PuerkitoBio/goquery" {
-		log.Printf("tokens: %v, doc: %+v, synTokens: %v", tokens, doc, synTokens)
-	}
-			
-	for token := range tokens {
-		if matchToken(token, synopsis, synTokens) {
-			s += 0.25
+func fetchDocs(c appengine.Context, ids []string, docs []DocInfo) {
+	var pDocs []*DocInfo
+	var keys []*datastore.Key
+	// fetch from memcache
+	for i, id := range ids {
+		mcID := prefixCachedDocDB + kindDocDB + ":" + id
+		pDoc := &docs[i]
+		if _, err := memcache.Gob.Get(c, mcID, pDoc); err == nil {
+			continue
 		}
-
-		if matchToken(token, name, nameTokens) {
-			s += 0.4
-		}
-
-		if matchToken(token, pkg, pkgTokens) {
-			s += 0.1
-		}
+		pDocs = append(pDocs, pDoc)
+		keys = append(keys, datastore.NewKey(c, kindDocDB, id, 0, nil))
 	}
-
-	return s
+	
+	c.Infof("%d items from memcache", len(ids) - len(pDocs))
+	if len(pDocs) == 0 {
+		// all from memcache, nothing else to do
+		return
+	}
+	
+	var mcItems []*memcache.Item
+	// fetch from datastore
+	for offs := 0; offs < len(pDocs); {
+		n := len(pDocs) - offs
+		if n > 200 {
+			n = 200
+		}
+		
+		err := datastore.GetMulti(c, keys[offs:offs+n], pDocs[offs:offs+n])
+		if err == nil {
+			for i := 0; i < n; i ++ {
+				key := keys[offs + i]
+				id := key.StringID()
+				mcID := prefixCachedDocDB + kindDocDB + ":" + id
+				mcItems = append(mcItems, &memcache.Item{
+					Key: mcID,
+					Object: pDocs[offs + i],
+				})
+			}
+		} else if me, ok := err.(appengine.MultiError); ok {
+			for i := 0; i < n; i ++ {
+				if !DocGetOk(me[i]) {
+					continue
+				}
+				key := keys[offs + i]
+				id := key.StringID()
+				mcID := prefixCachedDocDB + kindDocDB + ":" + id
+				mcItems = append(mcItems, &memcache.Item{
+					Key: mcID,
+					Object: pDocs[offs + i],
+				})
+			}
+		} else {
+			c.Errorf("fetchDocs: %v", err)
+		}
+		
+		offs += n
+	}
+	
+	c.Infof("%d items from datastore", len(mcItems))
+	
+	// save back to memcache
+	err := memcache.Gob.SetMulti(c, mcItems)
+	if err != nil {
+		c.Errorf("fetchDocs: %v", err)
+	}
 }
 
 func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) {
@@ -351,15 +285,18 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 		return &SearchResult{}, nil, nil
 	}
 
+	c.Infof("%d tokens for query %s", len(tokens), q)
+	
 	ids, err := ts.Search("doc", tokens)
 	if err != nil {
 		return nil, nil, err
 	}
 	c.Infof("%d ids got for query %s", len(ids), q)
 
-	ddb := NewCachedDocDB(c, kindDocDB)
+	//ddb := NewCachedDocDB(c, kindDocDB)
 
 	docs := make([]DocInfo, len(ids))
+	/*
 	for i, id := range ids {
 		err, exists := ddb.Get(id, &docs[i])
 		if err != nil {
@@ -375,10 +312,22 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 			docs[i].Score = (docs[i].StaticScore - 0.9) * docs[i].MatchScore
 		}
 	}
+	*/
+	fetchDocs(c, ids, docs)
+	pDocs := make([]*DocInfo, 0, len(docs))
+	for i := range docs {
+		if docs[i].Package != "" {
+			docs[i].MatchScore = calcMatchScore(&docs[i], tokens)
+			docs[i].Score = (docs[i].StaticScore - 0.9) * docs[i].MatchScore
+			
+			pDocs = append(pDocs, &docs[i])
+		}
+	}
+	c.Infof("%d available docs", len(pDocs))
 
-	villa.SortF(len(docs), func(i, j int) bool {
+	villa.SortF(len(pDocs), func(i, j int) bool {
 		// true if doc i is before doc j
-		ssi, ssj := docs[i].Score, docs[j].Score
+		ssi, ssj := pDocs[i].Score, pDocs[j].Score
 		if ssi > ssj {
 			return true
 		}
@@ -386,7 +335,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 			return false
 		}
 
-		sci, scj := docs[i].StarCount, docs[j].StarCount
+		sci, scj := pDocs[i].StarCount, pDocs[j].StarCount
 		if sci > scj {
 			return true
 		}
@@ -394,7 +343,7 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 			return false
 		}
 
-		pi, pj := docs[i].Package, docs[j].Package
+		pi, pj := pDocs[i].Package, pDocs[j].Package
 		if len(pi) < len(pj) {
 			return true
 		}
@@ -405,12 +354,13 @@ func search(c appengine.Context, q string) (*SearchResult, villa.StrSet, error) 
 		return pi < pj
 	}, func(i, j int) {
 		// Swap
-		docs[i], docs[j] = docs[j], docs[i]
+		pDocs[i], pDocs[j] = pDocs[j], pDocs[i]
 	})
 
+	c.Infof("Docs sorted")
 	return &SearchResult{
 		TotalResults: len(ids),
-		Docs:         docs,
+		Docs:         pDocs,
 	}, tokens, nil
 }
 

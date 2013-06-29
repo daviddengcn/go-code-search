@@ -7,9 +7,9 @@
 <div class="desc">
     {{.DescHTML}}
 </div>
-{{else}}{{if .ReadmeData}}<pre class="readme">({{.ReadmeFn}})
+{{end}}{{if .ShowReadme}}<pre class="readme">({{.ReadmeFn}})
 {{.ReadmeData}}
-</pre>{{end}}{{end}}
+</pre>{{end}}
 <div>Imported by {{len .ImportedPkgs}} package(s):</div>
     <ol>
         {{range .ImportedPkgs}}

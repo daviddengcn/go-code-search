@@ -52,7 +52,7 @@ type SubProjectInfo struct {
 }
 
 type ShowDocInfo struct {
-	DocInfo
+	*DocInfo
 	Summary       template.HTML
 	MarkedName    template.HTML
 	MarkedPackage template.HTML
@@ -125,6 +125,10 @@ mainLoop:
 				}
 			}
 		}
+		
+		if len(docs) >= 1000 {
+			continue
+		}
 
 		raw := selectSnippets(d.Description+"\n"+d.ReadmeData, tokens, 300)
 
@@ -165,10 +169,12 @@ func pageSearch(w http.ResponseWriter, r *http.Request) {
 		SearchTime: time.Now().Sub(startTime),
 		BottomQ:    len(results.Docs) >= 5,
 	}
+	c.Infof("Search results ready")
 	err = templates.ExecuteTemplate(w, "search.html", data)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+	c.Infof("Search results rendered")
 }
 
 func pageAdd(w http.ResponseWriter, r *http.Request) {
@@ -219,13 +225,17 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 		
 		var descHTML villa.ByteSlice
 		godoc.ToHTML(&descHTML, doc.Description, nil)
+		
+		showReadme := len(doc.Description) < 10 && len(doc.ReadmeData) > 0
 
 		err = templates.ExecuteTemplate(w, "view.html", struct {
 			DocInfo
 			DescHTML template.HTML
+			ShowReadme bool
 		}{
-			DocInfo:  doc,
-			DescHTML: template.HTML(descHTML),
+			DocInfo:    doc,
+			DescHTML:   template.HTML(descHTML),
+			ShowReadme: showReadme,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
