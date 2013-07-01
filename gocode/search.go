@@ -78,8 +78,20 @@ func isTermSep(r rune) bool {
 	return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r)
 }
 
+var stemBlackList = map[string]string {
+	"ide":      "ide",
+	"generics": "generic",
+	"generic":  "generic",
+}
+
 func normWord(word string) string {
-	return string(stemmer.Stem([]byte(word)))
+	word = strings.ToLower(word)
+	if mapWord, ok := stemBlackList[word]; ok {
+		word = mapWord
+	} else {
+		word = string(stemmer.Stem([]byte(word)))
+	}
+	return word
 }
 
 func CheckRuneType(last, current rune) index.RuneType {
@@ -142,6 +154,10 @@ func filterURLs(text string) string {
 	return patURL.ReplaceAllString(text, " ")
 }
 
+var stopWords = villa.NewStrSet([]string{
+	"the", "on", "in", "as",
+}...)
+
 func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 	/*
 		for _, token := range strings.FieldsFunc(text, isTermSep) {
@@ -160,7 +176,9 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 			index.Tokenize(CheckCamel, villa.NewPByteSlice(token), func(token []byte) error {
 				tokenStr = string(token)
 				tokenStr = normWord(tokenStr)
-				tokens.Put(tokenStr)
+				if !stopWords.In(tokenStr) {
+					tokens.Put(tokenStr)
+				}
 
 				if last != "" {
 					tokens.Put(last + "-" + string(tokenStr))
@@ -171,7 +189,9 @@ func appendTokens(tokens villa.StrSet, text string) villa.StrSet {
 			})
 		}
 		tokenStr = normWord(tokenStr)
-		tokens.Put(tokenStr)
+		if !stopWords.In(tokenStr) {
+			tokens.Put(tokenStr)
+		}
 
 		if tokenStr[0] > 128 && len(lastToken) > 0 && lastToken[0] > 128 {
 			tokens.Put(lastToken + tokenStr)
@@ -459,6 +479,9 @@ func processDocument(c appengine.Context, d *DocInfo) error {
 	}
 	if exists && d.StarCount < 0 {
 		d.StarCount = savedD.StarCount
+	}
+	if d.StarCount < 0 {
+		d.StarCount = 0
 	}
 
 	// get imported packages

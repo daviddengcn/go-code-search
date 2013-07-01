@@ -133,6 +133,9 @@ mainLoop:
 		raw := selectSnippets(d.Description+"\n"+d.ReadmeData, tokens, 300)
 
 		projToIdx[d.Package] = len(docs)
+		if d.StarCount < 0 {
+			d.StarCount = 0
+		}
 		docs = append(docs, ShowDocInfo{
 			DocInfo:       d,
 			MarkedName:    markedName,
@@ -221,6 +224,10 @@ func pageView(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, ` Click to <a href="crawl?id=%s">crawl</a>.</body></html>`,
 				template.URLQueryEscaper(id))
 			return
+		}
+		
+		if doc.StarCount < 0 {
+			doc.StarCount = 0
 		}
 		
 		var descHTML villa.ByteSlice
