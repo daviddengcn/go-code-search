@@ -30,6 +30,19 @@ textarea#pkg {
     height: 500px;
 }
 
+.schres div.num {
+    display: inline-block;
+    width: 2em;
+    margin-left: -2.5em;
+    margin-right: 0.5em;
+    text-align: right;
+}
+
+
+.schres li {
+    list-style-type: none;
+}
+
 .schres .title a, .schres .title a:link, .schres .title a:visited {
     color: #12c;
 }
@@ -40,6 +53,36 @@ textarea#pkg {
 
 .schres .info a {
     text-decoration: none;
+}
+
+div.pages {
+    margin-bottom: 10px;
+}
+
+.pages span.prevpage {
+    display: inline-block;
+    width: 1em;
+    text-align: center;
+}
+
+.pages span.prevpage a {
+    text-decoration: none;
+}
+
+.pages .page {
+    padding-left: 0.2em;
+    padding-right: 0.2em;
+}
+
+.pages a.page {
+    border: 1px solid gray;
+    border-radius: 5px;
+    text-decoration: none;
+}
+
+.pages a.page:hover {
+    background: gray;
+    color: white;
 }
 
 .code {

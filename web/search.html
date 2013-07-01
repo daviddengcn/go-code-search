@@ -15,7 +15,7 @@
         {{range .Results.Docs}}
             <li>
                 <div class="title">
-                    <a target="_blank" href="/view?id={{.Package}}">{{if .MarkedName}}{{.MarkedName}}{{else}}({{.MarkedPackage}}){{end}}</a>
+                    <div class="num">{{.Index}}.</div><a target="_blank" href="/view?id={{.Package}}">{{if .MarkedName}}{{.MarkedName}}{{else}}({{.MarkedPackage}}){{end}}</a>
                     - {{len .ImportedPkgs}} refs
                     - {{.StarCount}} stars
                 </div>
@@ -37,6 +37,17 @@
             </li>
         {{end}}
     </ol>
+</div>
+<div class="pages">{{$q := .Q}}
+    <span class="prevpage">{{with .PrevPage}}<a href="?q={{$q}}&p={{.}}"> « </a>{{end}}</span>
+    {{range .BeforePages}}
+    <a  class="page" href="?q={{$q}}&p={{.}}">{{.}}</a>
+    {{end}}
+    <span class="page">{{.CurrentPage}}</span>
+    {{range .AfterPages}}
+    <a  class="page" href="?q={{$q}}&p={{.}}">{{.}}</a>
+    {{end}}
+    <span class="prevpage">{{with .NextPage}}<a href="?q={{$q}}&p={{.}}"> » </a>{{end}}</span>
 </div>
 {{if .BottomQ}}
 <div>

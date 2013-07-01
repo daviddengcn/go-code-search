@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	godoc "go/doc"
+	"strconv"
 )
 
 var templates = template.Must(template.ParseGlob(`web/*`))
@@ -53,6 +54,7 @@ type SubProjectInfo struct {
 
 type ShowDocInfo struct {
 	*DocInfo
+	Index         int
 	Summary       template.HTML
 	MarkedName    template.HTML
 	MarkedPackage template.HTML
@@ -61,6 +63,7 @@ type ShowDocInfo struct {
 
 type ShowResults struct {
 	TotalResults int
+	TotalEntries int
 	Folded       int
 	Docs         []ShowDocInfo
 }
@@ -95,63 +98,90 @@ func markText(text string, tokens villa.StrSet,
 	return template.HTML(string(outBuf))
 }
 
-func showSearchResults(results *SearchResult, tokens villa.StrSet) *ShowResults {
+type Range struct {
+	start, count int
+}
+
+func (r Range) In(idx int) bool {
+	return idx >= r.start && idx < r.start + r.count
+}
+
+func showSearchResults(results *SearchResult, tokens villa.StrSet,
+	r Range) *ShowResults {
 	docs := make([]ShowDocInfo, 0, len(results.Docs))
 
 	projToIdx := make(map[string]int)
 	folded := 0
 
+	cnt := 0
 mainLoop:
 	for _, d := range results.Docs {
 		if d.Name == "main" {
 			d.Name = "main - " + projectOfPackage(d.Package)
 		}
 
-		markedName := markText(d.Name, tokens, markWord)
-
 		parts := strings.Split(d.Package, "/")
 		if len(parts) > 2 {
 			for i := len(parts) - 1; i >= 2; i-- {
 				pkg := strings.Join(parts[:i], "/")
 				if idx, ok := projToIdx[pkg]; ok {
-					docs[idx].Subs = append(docs[idx].Subs, SubProjectInfo{
-						MarkedName: markedName,
-						Package:    d.Package,
-						SubPath:    "/" + strings.Join(parts[i:], "/"),
-						Info:       d.Synopsis,
-					})
+					markedName := markText(d.Name, tokens, markWord)
+					if r.In(idx) {
+						docsIdx := idx - r.start
+						docs[docsIdx].Subs = append(docs[docsIdx].Subs,
+							SubProjectInfo{
+								MarkedName: markedName,
+								Package:    d.Package,
+								SubPath:    "/" + strings.Join(parts[i:], "/"),
+								Info:       d.Synopsis,
+							})
+					}
 					folded++
 					continue mainLoop
 				}
 			}
 		}
 		
-		if len(docs) >= 1000 {
-			continue
-		}
+//		if len(docs) >= 1000 {
+//			continue
+//		}
 
-		raw := selectSnippets(d.Description+"\n"+d.ReadmeData, tokens, 300)
-
-		projToIdx[d.Package] = len(docs)
-		if d.StarCount < 0 {
-			d.StarCount = 0
+		projToIdx[d.Package] = cnt
+		if r.In(cnt) {
+			markedName := markText(d.Name, tokens, markWord)
+			raw := selectSnippets(d.Description+"\n"+d.ReadmeData, tokens, 300)
+	
+			if d.StarCount < 0 {
+				d.StarCount = 0
+			}
+			docs = append(docs, ShowDocInfo{
+				DocInfo:       d,
+				Index:         cnt + 1,
+				MarkedName:    markedName,
+				Summary:       markText(raw, tokens, markWord),
+				MarkedPackage: markText(d.Package, tokens, markWord),
+			})
 		}
-		docs = append(docs, ShowDocInfo{
-			DocInfo:       d,
-			MarkedName:    markedName,
-			Summary:       markText(raw, tokens, markWord),
-			MarkedPackage: markText(d.Package, tokens, markWord),
-		})
+		cnt ++
 	}
 
 	return &ShowResults{
 		TotalResults: results.TotalResults,
+		TotalEntries: cnt,
 		Folded:       folded,
 		Docs:         docs,
 	}
 }
 
+const itemsPerPage = 10
+
 func pageSearch(w http.ResponseWriter, r *http.Request) {
+	// current page, 1-based
+	p, err := strconv.Atoi(r.FormValue("p"))
+	if err != nil {
+		p = 1
+	}
+	
 	startTime := time.Now()
 
 	c := appengine.NewContext(r)
@@ -161,16 +191,48 @@ func pageSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	
+	showResults := showSearchResults(results, tokens,
+						Range{(p - 1)*itemsPerPage, itemsPerPage})
+	totalPages := (showResults.TotalEntries + itemsPerPage - 1) / itemsPerPage
+	c.Infof("totalPages: %d", totalPages)
+	var beforePages, afterPages []int
+	for i := 1; i <= totalPages; i ++ {
+		if i < p && p - i < 10 {
+			beforePages = append(beforePages, i)
+		} else if i > p && i - p < 10 {
+			afterPages = append(afterPages, i)
+		}
+	}
+	
+	prevPage, nextPage := p - 1, p + 1
+	if prevPage < 0 || prevPage > totalPages {
+		prevPage = 0
+	}
+	if nextPage < 0 || nextPage > totalPages {
+		nextPage = 0
+	}
+	
 	data := struct {
-		Q          string
-		Results    *ShowResults
-		SearchTime time.Duration
-		BottomQ    bool
+		Q           string
+		Results     *ShowResults
+		SearchTime  time.Duration
+		BeforePages []int
+		PrevPage    int
+		CurrentPage int
+		NextPage    int
+		AfterPages  []int
+		BottomQ     bool
 	}{
-		Q:          q,
-		Results:    showSearchResults(results, tokens),
-		SearchTime: time.Now().Sub(startTime),
-		BottomQ:    len(results.Docs) >= 5,
+		Q:           q,
+		Results:     showResults,
+		SearchTime:  time.Now().Sub(startTime),
+		BeforePages: beforePages,
+		PrevPage:    prevPage,
+		CurrentPage: p,
+		NextPage:    nextPage,
+		AfterPages:  afterPages,
+		BottomQ:     len(results.Docs) >= 5,
 	}
 	c.Infof("Search results ready")
 	err = templates.ExecuteTemplate(w, "search.html", data)
